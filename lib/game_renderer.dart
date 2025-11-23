@@ -330,6 +330,7 @@ class GameRenderer {
       0,
       6 * 13,
       frameTexture,
+      texCoords: cubeTextureCoordinates,
     );
   }
 
@@ -342,6 +343,7 @@ class GameRenderer {
       6 * 13,
       6,
       surfaceTexture,
+      texCoords: cubeTextureCoordinates,
     );
   }
 
@@ -376,11 +378,13 @@ class GameRenderer {
     }
 
     // Draw border
-    _drawMesh(canvas, size, positions, 0, 6 * MeshData.CIRC_SEGMENTS, borderTexture);
+    _drawMesh(canvas, size, positions, 0, 6 * MeshData.CIRC_SEGMENTS, borderTexture,
+        texCoords: cylinderTextureCoordinates);
 
     // Draw top
     _drawMesh(canvas, size, positions, 6 * MeshData.CIRC_SEGMENTS,
-        3 * MeshData.CIRC_SEGMENTS, topTexture);
+        3 * MeshData.CIRC_SEGMENTS, topTexture,
+        texCoords: cylinderTextureCoordinates);
   }
 
   /// Draw arrows
@@ -468,7 +472,8 @@ class GameRenderer {
   }
 
   void drawCrossModel(Canvas canvas, Size size) {
-    _drawMesh(canvas, size, arrowTailPositions, 0, 6 * 5, rDiskTexture);
+    _drawMesh(canvas, size, arrowTailPositions, 0, 6 * 5, rDiskTexture,
+        texCoords: arrowTailTextureCoordinates);
   }
 
   /// Draw arcs (shooting angle guides)
@@ -561,21 +566,24 @@ class GameRenderer {
 
   void drawFloor(Canvas canvas, Size size) {
     _drawMesh(canvas, size, floorPositions, 0,
-        6 * MeshData.FLOOR_SECTIONS * MeshData.FLOOR_SECTIONS, floorTexture);
+        6 * MeshData.FLOOR_SECTIONS * MeshData.FLOOR_SECTIONS, floorTexture,
+        texCoords: floorTextureCoordinates);
   }
 
   void drawWall(Canvas canvas, Size size) {
     _drawMesh(canvas, size, floorPositions, 0,
-        6 * MeshData.FLOOR_SECTIONS * MeshData.FLOOR_SECTIONS, wallTexture);
+        6 * MeshData.FLOOR_SECTIONS * MeshData.FLOOR_SECTIONS, wallTexture,
+        texCoords: floorTextureCoordinates);
   }
 
   void drawTableLeg(Canvas canvas, Size size) {
-    _drawMesh(canvas, size, arrowTailPositions, 0, 6 * 6, chairLegTexture);
+    _drawMesh(canvas, size, arrowTailPositions, 0, 6 * 6, chairLegTexture,
+        texCoords: arrowTailTextureCoordinates);
   }
 
   /// Helper method to draw a mesh with texture
   void _drawMesh(Canvas canvas, Size size, Float32List positions, int offset,
-      int vertexCount, ui.Image? texture) {
+      int vertexCount, ui.Image? texture, {Float32List? texCoords}) {
     if (texture == null) {
       return;
     }
@@ -590,7 +598,7 @@ class GameRenderer {
     }
 
     // Transform vertices and draw
-    _drawTransformedMesh(canvas, size, positions, offset, vertexCount, texture, mvpMatrix);
+    _drawTransformedMesh(canvas, size, positions, offset, vertexCount, texture, mvpMatrix, texCoords: texCoords);
   }
 
   /// Helper method to draw colored mesh (for transparent objects)
@@ -604,12 +612,18 @@ class GameRenderer {
     _drawTransformedColoredMesh(canvas, size, positions, offset, vertexCount, mvpMatrix);
   }
 
-  /// Transform vertices and draw to canvas
+  /// Transform vertices and draw to canvas using drawVertices for proper UV mapping
   void _drawTransformedMesh(Canvas canvas, Size size, Float32List positions,
-      int offset, int vertexCount, ui.Image texture, Float32List mvp) {
-    final paint = Paint();
+      int offset, int vertexCount, ui.Image texture, Float32List mvp, {Float32List? texCoords}) {
     
-    // Draw triangles
+    // Prepare lists for vertices
+    final List<Offset> vertices = [];
+    final List<Offset> textureCoordinates = [];
+    final List<int> indices = [];
+    
+    int vertexIndex = 0;
+    
+    // Process triangles
     for (int i = 0; i < vertexCount; i += 3) {
       final idx = (offset + i) * 3;
       if (idx + 8 >= positions.length) break;
@@ -622,36 +636,81 @@ class GameRenderer {
       final v3 = matrix.MatrixUtils.transformPoint(
           mvp, positions[idx + 6], positions[idx + 7], positions[idx + 8]);
 
+      // Simple z-clipping
+      if (v1[2] < -2 || v1[2] > 2 || v2[2] < -2 || v2[2] > 2 || v3[2] < -2 || v3[2] > 2) {
+        continue;
+      }
+
+      // Skip triangles behind camera
+      if (v1[2] > 0.9 && v2[2] > 0.9 && v3[2] > 0.9) {
+        continue;
+      }
+
       // Convert to screen coordinates
       final p1 = _toScreen(v1, size);
       final p2 = _toScreen(v2, size);
       final p3 = _toScreen(v3, size);
 
-      // Simple z-clipping - be more lenient
-      if (v1[2] < -2 || v1[2] > 2 || v2[2] < -2 || v2[2] > 2 || v3[2] < -2 || v3[2] > 2) {
-        continue;
+      // Add vertices
+      vertices.add(p1);
+      vertices.add(p2);
+      vertices.add(p3);
+
+      // Add texture coordinates if available
+      if (texCoords != null && texCoords.length > (offset + i) * 2 + 5) {
+        final uvIdx = (offset + i) * 2;
+        final texWidth = texture.width.toDouble();
+        final texHeight = texture.height.toDouble();
+        
+        // Convert normalized UV (0-1) to texture pixel coordinates
+        textureCoordinates.add(Offset(
+          texCoords[uvIdx] * texWidth,
+          texCoords[uvIdx + 1] * texHeight,
+        ));
+        textureCoordinates.add(Offset(
+          texCoords[uvIdx + 2] * texWidth,
+          texCoords[uvIdx + 3] * texHeight,
+        ));
+        textureCoordinates.add(Offset(
+          texCoords[uvIdx + 4] * texWidth,
+          texCoords[uvIdx + 5] * texHeight,
+        ));
+      } else {
+        // Default UVs if not provided
+        textureCoordinates.add(const Offset(0, 0));
+        textureCoordinates.add(Offset(texture.width.toDouble(), 0));
+        textureCoordinates.add(Offset(0, texture.height.toDouble()));
       }
 
-      // Skip triangles that are behind the camera
-      if (v1[2] > 0.9 && v2[2] > 0.9 && v3[2] > 0.9) {
-        continue;
-      }
+      // Add indices for this triangle
+      indices.add(vertexIndex);
+      indices.add(vertexIndex + 1);
+      indices.add(vertexIndex + 2);
+      vertexIndex += 3;
+    }
 
-      // Draw triangle with texture
-      final path = Path()
-        ..moveTo(p1.dx, p1.dy)
-        ..lineTo(p2.dx, p2.dy)
-        ..lineTo(p3.dx, p3.dy)
-        ..close();
+    // Draw all triangles in one call using drawVertices
+    if (vertices.isNotEmpty) {
+      final paint = Paint()
+        ..isAntiAlias = true
+        ..filterQuality = FilterQuality.high
+        ..shader = ImageShader(
+          texture,
+          TileMode.clamp,
+          TileMode.clamp,
+          Matrix4.identity().storage,
+        );
 
-      // Apply texture shader
-      paint.shader = ImageShader(
-        texture,
-        TileMode.clamp,
-        TileMode.clamp,
-        Matrix4.identity().storage,
+      canvas.drawVertices(
+        ui.Vertices(
+          ui.VertexMode.triangles,
+          vertices,
+          textureCoordinates: textureCoordinates,
+          indices: indices,
+        ),
+        BlendMode.srcOver,
+        paint,
       );
-      canvas.drawPath(path, paint);
     }
   }
 

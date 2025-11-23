@@ -7,7 +7,7 @@ class TextureLoader {
   static Future<ui.Image> loadImage(String assetPath) async {
     try {
       final data = await rootBundle.load(assetPath);
-      final codec = await ui.instantiateImageCodec(data.buffer.asUint8List());
+      final codec = await ui. instantiateImageCodec(data.buffer.asUint8List());
       final frame = await codec.getNextFrame();
       return frame.image;
     } catch (e) {
