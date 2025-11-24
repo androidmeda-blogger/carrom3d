@@ -7,9 +7,9 @@ import 'mesh_data.dart';
 import 'texture_loader.dart';
 
 /// GameRenderer - Direct port of GameRenderer.java
-/// Handles all 3D rendering using Canvas API and fragment shaders
+/// Render logic is kept 1:1 as much as possible; implementation uses Canvas.
 class GameRenderer {
-  // Matrix storage
+  // Matrices
   late Float32List modelMatrix;
   late Float32List viewMatrix;
   late Float32List tmpViewMatrix;
@@ -17,7 +17,7 @@ class GameRenderer {
   late Float32List mvpMatrix;
   late Float32List mvMatrix;
 
-  // Mesh data buffers (matching GameRenderer.java fields)
+  // Mesh data (mirrors GameRenderer.java fields)
   late Float32List cubePositions;
   late Float32List cubeTextureCoordinates;
   late Float32List cylinderPositions;
@@ -27,11 +27,11 @@ class GameRenderer {
   late Float32List arrowTailPositions;
   late Float32List arrowTailTextureCoordinates;
   late Float32List arcPositions;
-  late Float32List objectColors;
+  late Float32List objectColors; // kept for completeness, but color is constant
   late Float32List floorPositions;
   late Float32List floorTextureCoordinates;
 
-  // Texture handles (will be loaded as ui.Image)
+  // “Texture handles” -> images
   ui.Image? frameTexture;
   ui.Image? surfaceTexture;
   ui.Image? redTexture;
@@ -43,7 +43,7 @@ class GameRenderer {
   ui.Image? floorTexture;
   ui.Image? wallTexture;
   ui.Image? chairLegTexture;
-  
+
   ui.Image? rDiskBorderTexture;
   ui.Image? hDiskBorderTexture;
   ui.Image? diskBorderTexture;
@@ -61,19 +61,19 @@ class GameRenderer {
   double screenWidth = 0;
   double screenHeight = 0;
 
-  // View parameters
+  // View / camera parameters
   double yangle = 0;
   double xangle = 0;
   double eyedisp = 0;
   double scale = 1;
   bool rotateXFirst = true;
 
-  // Camera position (matching GameRenderer.java)
+  // Camera position
   double eyeX = 0.0;
   double eyeY = 3.5;
   double eyeZ = 0.0;
 
-  // Look at point
+  // Look-at target
   final double lookX = 0.0;
   final double lookY = -5.0;
   final double lookZ = 0.0;
@@ -90,7 +90,7 @@ class GameRenderer {
   double shootingX = 0;
   double shootingY = 0;
 
-  // Arrow display
+  // Arrows
   List<double> arrowX = List.filled(16, 0.0);
   List<double> arrowY = List.filled(16, 0.0);
   List<double> arrowLen = List.filled(16, 0.0);
@@ -102,11 +102,11 @@ class GameRenderer {
   double arrowHeadWidth = 0.06;
   double arrowWidth = 0.02;
 
-  // Arc display
+  // Arcs
   bool showArcs = false;
   double arcAngle = 0;
 
-  // Cross display
+  // Cross (cancel indicator)
   double crossX1 = 0.3;
   double crossY1 = 0.6;
   double crossX2 = 0.3;
@@ -114,7 +114,7 @@ class GameRenderer {
   double crossAngle = 0;
 
   GameRenderer() {
-    // Initialize matrices
+    // Matrices
     modelMatrix = matrix.MatrixUtils.identity();
     viewMatrix = matrix.MatrixUtils.identity();
     tmpViewMatrix = matrix.MatrixUtils.identity();
@@ -122,17 +122,14 @@ class GameRenderer {
     mvpMatrix = matrix.MatrixUtils.identity();
     mvMatrix = matrix.MatrixUtils.identity();
 
-    // Initialize mesh data (matching Java: MeshData.initData(this))
+    // Mesh data (equivalent to MeshData.initData(this) in Java ctor)
     MeshData.initData(this);
-
-    // Note: initView() is NOT called here (it's never called in Java either)
-    // Camera is initialized by GameController/GameEngine calling updateEye()
   }
 
-  /// Load all textures from assets
+  /// Load textures (equivalent to onSurfaceCreated texture loading)
   Future<void> loadTextures() async {
     final textures = await TextureLoader.loadAllTextures();
-    
+
     frameTexture = textures['frame'];
     surfaceTexture = textures['surface'];
     redTexture = textures['red'];
@@ -143,8 +140,8 @@ class GameRenderer {
     rDiskTexture = textures['rdisk'];
     floorTexture = textures['floor'];
     wallTexture = textures['wall'];
-    chairLegTexture = textures['frame']; // Reuse frame texture
-    
+    chairLegTexture = frameTexture; // matches Java using frame texture
+
     rDiskBorderTexture = textures['rdisk_border'];
     hDiskBorderTexture = textures['hdisk_border'];
     diskBorderTexture = textures['disk_border'];
@@ -153,9 +150,7 @@ class GameRenderer {
     redBorderTexture = textures['red_border'];
   }
 
-  /// Initialize the view (camera) settings
-  /// Legacy method - never called (matching Java where it's commented out)
-  /// Camera is initialized via GameController/GameEngine calling updateEye()
+  /// Equivalent to Java initView() (camera reset)
   void initView() {
     yangle = 0;
     xangle = -30;
@@ -166,20 +161,26 @@ class GameRenderer {
     upZ = -1;
   }
 
-  /// Update eye/camera position and orientation
+  /// Equivalent to Java updateEye()
   void updateEye(double ydiff, double xdiff, double scalediff, double eyediff) {
     yangle += ydiff;
     xangle += xdiff;
     scale += scalediff;
     eyedisp += eyediff;
 
-    // Debug updateEye (disabled - uncomment if needed)
-    // if (_updateEyeCallCount < 3) {
-    //   print("updateEye #$_updateEyeCallCount: up=($upX,$upY,$upZ), angles=($xangle,$yangle)");
-    //   _updateEyeCallCount++;
-    // }
-    
-    matrix.MatrixUtils.setLookAt(tmpViewMatrix, eyeX, eyeY, eyeZ, lookX, lookY, lookZ, upX, upY, upZ);
+    matrix.MatrixUtils.setLookAt(
+      tmpViewMatrix,
+      eyeX,
+      eyeY,
+      eyeZ,
+      lookX,
+      lookY,
+      lookZ,
+      upX,
+      upY,
+      upZ,
+    );
+
     matrix.MatrixUtils.translate(tmpViewMatrix, eyedisp, 0, 0);
 
     if (rotateXFirst) {
@@ -192,18 +193,18 @@ class GameRenderer {
 
     matrix.MatrixUtils.scale(tmpViewMatrix, scale, scale, scale);
 
-    // Swap matrices
+    // swap
     final temp = viewMatrix;
     viewMatrix = tmpViewMatrix;
     tmpViewMatrix = temp;
   }
 
-  /// Called when surface size changes
+  /// Equivalent to Java onSurfaceChanged()
   void onSurfaceChanged(double width, double height) {
     screenWidth = width;
     screenHeight = height;
 
-    double scaleFactor = 0;
+    double scaleFactor;
     if (width > height) {
       scaleFactor = 0.30;
     } else {
@@ -216,50 +217,48 @@ class GameRenderer {
     final right = ratio * scaleFactor;
     final bottom = -scaleFactor;
     final top = scaleFactor;
-    final near = 1.0;
-    final far = 18.0;
+    const near = 1.0;
+    const far = 18.0;
 
-    matrix.MatrixUtils.frustum(projectionMatrix, left, right, bottom, top, near, far);
+    matrix.MatrixUtils.frustum(
+      projectionMatrix,
+      left,
+      right,
+      bottom,
+      top,
+      near,
+      far,
+    );
   }
 
-  /// Main draw method - renders a frame
+  /// Equivalent to Java onDrawFrame()
   void onDrawFrame(Canvas canvas, Size size) {
-    // Clear background (black for better visibility)
+    // Clear to white like glClearColor(1,1,1,1)
     canvas.drawRect(
       Rect.fromLTWH(0, 0, size.width, size.height),
-      Paint()..color = Colors.black,
+      Paint()..color = Colors.white,
     );
 
-    // Note: Java's onDrawFrame does NOT call updateEye here
-    // updateEye is only called when camera changes (input, game logic)
-    
-    // Draw background (floor, walls, table legs)
-    try {
-      drawBackground(canvas, size);
-    } catch (e) {
-      print("ERROR in drawBackground: $e");
-    }
+    // Java: first program is texture program -> we draw textured stuff first.
 
-    // Draw board cube and face
-    try {
-      matrix.MatrixUtils.setIdentity(modelMatrix);
-      drawCube(canvas, size);
-      drawBoardFace(canvas, size);
-    } catch (e) {
-      print("ERROR in drawCube/drawBoardFace: $e");
-    }
+    // Background (floor, walls, legs)
+    drawBackground(canvas, size);
 
-    // Draw pieces
+    // Board
+    matrix.MatrixUtils.setIdentity(modelMatrix);
+    drawCube(canvas, size);
+    drawBoardFace(canvas, size);
+
+    // Pieces
     for (int i = 0; i < 20; i++) {
-      if (presents[i] == 0) {
-        continue;
-      }
-      
+      if (presents[i] == 0) continue;
+
       matrix.MatrixUtils.setIdentity(modelMatrix);
 
       double height = 0;
       if (presents[i] == MeshData.HOLE_ANI_LIMIT - 1) {
-        height = -MeshData.HEIGHT *
+        height =
+            -MeshData.HEIGHT *
             (MeshData.HOLE_ANI_LIMIT - presents[i]) /
             MeshData.HOLE_ANI_LIMIT;
       }
@@ -275,25 +274,34 @@ class GameRenderer {
         -yposPieces[i],
       );
 
+      // opaque cylinder
       drawCylinder(canvas, size, i, false);
     }
 
-    // Draw cancel cross if needed
+    // Cross (cancel)
     if (aboutToCancel) {
       drawCross(canvas, size);
     }
 
-    // Draw shooting guide
+    // Java switches to color program + blending here.
+    // We mimic that by drawing transparent/colored shapes AFTER all opaque stuff
+    // and using BlendMode.plus where appropriate.
+
+    // Shooting guide ghost pieces
     if (readyToShoot && !aboutToCancel && (shootingX != 0 || shootingY != 0)) {
-      double shootingDist = math.sqrt(shootingX * shootingX + shootingY * shootingY);
+      double shootingDist = math.sqrt(
+        shootingX * shootingX + shootingY * shootingY,
+      );
       double adjustedShootingX = shootingX;
       double adjustedShootingY = shootingY;
-      
+
       if (shootingDist > MeshData.DISK_SHOOTING_MAX_DIST) {
-        adjustedShootingX = shootingX / shootingDist * MeshData.DISK_SHOOTING_MAX_DIST;
-        adjustedShootingY = shootingY / shootingDist * MeshData.DISK_SHOOTING_MAX_DIST;
+        adjustedShootingX =
+            shootingX / shootingDist * MeshData.DISK_SHOOTING_MAX_DIST;
+        adjustedShootingY =
+            shootingY / shootingDist * MeshData.DISK_SHOOTING_MAX_DIST;
       }
-      
+
       for (int i = 1; i <= 3; i++) {
         double x = xposPieces[0] + adjustedShootingX * i / 3;
         double y = yposPieces[0] + adjustedShootingY * i / 3;
@@ -306,22 +314,26 @@ class GameRenderer {
           -y,
         );
 
+        // transparent ghost disk
         drawCylinder(canvas, size, 0, true);
       }
     }
 
-    // Draw arrows
+    // Arrows
     if (arrowReady && showArrows) {
       drawArrows(canvas, size);
     }
 
-    // Draw arcs
+    // Arcs
     if (showArcs && !shootingMode) {
       drawArcs(canvas, size);
     }
+
+    // Java then restores cull/depth/blend, which isn’t needed for Canvas.
   }
 
-  /// Draw the board frame
+  // ---------- Board ----------
+
   void drawCube(Canvas canvas, Size size) {
     _drawMesh(
       canvas,
@@ -334,7 +346,6 @@ class GameRenderer {
     );
   }
 
-  /// Draw the board playing surface
   void drawBoardFace(Canvas canvas, Size size) {
     _drawMesh(
       canvas,
@@ -347,14 +358,27 @@ class GameRenderer {
     );
   }
 
-  /// Draw a cylinder (game piece)
-  void drawCylinder(Canvas canvas, Size size, int pieceIndex, bool transparent) {
+  // ---------- Cylinders / disks ----------
+
+  void drawCylinder(
+    Canvas canvas,
+    Size size,
+    int pieceIndex,
+    bool transparent,
+  ) {
     final positions = pieceIndex == 0 ? diskPositions : cylinderPositions;
-    
+
+    if (transparent) {
+      // Java: uses color program + blending, ignores textures.
+      final totalVerts =
+          6 * MeshData.CIRC_SEGMENTS + 3 * MeshData.CIRC_SEGMENTS;
+      _drawColoredMesh(canvas, size, positions, 0, totalVerts);
+      return;
+    }
+
     ui.Image? borderTexture;
     ui.Image? topTexture;
 
-    // Select textures based on piece type
     if (pieceIndex == 0) {
       if (aboutToCancel) {
         borderTexture = rDiskBorderTexture;
@@ -377,17 +401,31 @@ class GameRenderer {
       topTexture = blackTexture;
     }
 
-    // Draw border
-    _drawMesh(canvas, size, positions, 0, 6 * MeshData.CIRC_SEGMENTS, borderTexture,
-        texCoords: cylinderTextureCoordinates);
+    // Border
+    _drawMesh(
+      canvas,
+      size,
+      positions,
+      0,
+      6 * MeshData.CIRC_SEGMENTS,
+      borderTexture,
+      texCoords: cylinderTextureCoordinates,
+    );
 
-    // Draw top
-    _drawMesh(canvas, size, positions, 6 * MeshData.CIRC_SEGMENTS,
-        3 * MeshData.CIRC_SEGMENTS, topTexture,
-        texCoords: cylinderTextureCoordinates);
+    // Top
+    _drawMesh(
+      canvas,
+      size,
+      positions,
+      6 * MeshData.CIRC_SEGMENTS,
+      3 * MeshData.CIRC_SEGMENTS,
+      topTexture,
+      texCoords: cylinderTextureCoordinates,
+    );
   }
 
-  /// Draw arrows
+  // ---------- Arrows ----------
+
   void drawArrows(Canvas canvas, Size size) {
     const factor = 1.1;
 
@@ -396,7 +434,7 @@ class GameRenderer {
       final xscale = arrowLen[i];
       final yscale = MeshData.HEIGHT * factor;
       final zscale = arrowWidth;
-      
+
       matrix.MatrixUtils.rotate(modelMatrix, arrowAngle[i], 0, 1, 0);
       matrix.MatrixUtils.scale(modelMatrix, xscale, yscale, zscale);
       matrix.MatrixUtils.translate(
@@ -405,7 +443,7 @@ class GameRenderer {
         MeshData.BOARD_TOP / yscale,
         -arrowY[i] / zscale,
       );
-      
+
       drawArrowTail(canvas, size);
     }
 
@@ -414,8 +452,14 @@ class GameRenderer {
       final xscale = arrowHeadWidth;
       final yscale = MeshData.HEIGHT * factor;
       final zscale = arrowHeadWidth;
-      
-      matrix.MatrixUtils.rotate(modelMatrix, arrowAngle[arrowCount - 1], 0, 1, 0);
+
+      matrix.MatrixUtils.rotate(
+        modelMatrix,
+        arrowAngle[arrowCount - 1],
+        0,
+        1,
+        0,
+      );
       matrix.MatrixUtils.scale(modelMatrix, xscale, yscale, zscale);
       matrix.MatrixUtils.translate(
         modelMatrix,
@@ -423,30 +467,32 @@ class GameRenderer {
         MeshData.BOARD_TOP / yscale,
         -arrowY[arrowCount - 1] / zscale,
       );
-      
+
       drawArrowHead(canvas, size);
     }
   }
 
   void drawArrowHead(Canvas canvas, Size size) {
-    _drawColoredMesh(canvas, size, arrowHeadPositions, 0,
-        arrowHeadPositions.length ~/ 3);
+    final vertexCount = arrowHeadPositions.length ~/ 3; // 6*3+3 = 21
+    _drawColoredMesh(canvas, size, arrowHeadPositions, 0, vertexCount);
   }
 
   void drawArrowTail(Canvas canvas, Size size) {
     _drawColoredMesh(canvas, size, arrowTailPositions, 0, 6 * 5);
   }
 
-  /// Draw cross (cancel indicator)
+  // ---------- Cross (cancel) ----------
+
   void drawCross(Canvas canvas, Size size) {
     const factor = 1.1;
     const crossLen = 0.15;
 
+    // First slash
     matrix.MatrixUtils.setIdentity(modelMatrix);
     final xscale = crossLen;
     final yscale = MeshData.HEIGHT * factor;
     final zscale = 0.02;
-    
+
     matrix.MatrixUtils.rotate(modelMatrix, crossAngle + 45, 0, 1, 0);
     matrix.MatrixUtils.scale(modelMatrix, xscale, yscale, zscale);
     matrix.MatrixUtils.translate(
@@ -455,9 +501,10 @@ class GameRenderer {
       MeshData.BOARD_TOP / yscale,
       -crossY1 / zscale,
     );
-    
+
     drawCrossModel(canvas, size);
 
+    // Second slash
     matrix.MatrixUtils.setIdentity(modelMatrix);
     matrix.MatrixUtils.rotate(modelMatrix, crossAngle - 45, 0, 1, 0);
     matrix.MatrixUtils.scale(modelMatrix, xscale, yscale, zscale);
@@ -467,21 +514,34 @@ class GameRenderer {
       MeshData.BOARD_TOP / yscale,
       -crossY2 / zscale,
     );
-    
+
     drawCrossModel(canvas, size);
   }
 
   void drawCrossModel(Canvas canvas, Size size) {
-    _drawMesh(canvas, size, arrowTailPositions, 0, 6 * 5, rDiskTexture,
-        texCoords: arrowTailTextureCoordinates);
+    _drawMesh(
+      canvas,
+      size,
+      arrowTailPositions,
+      0,
+      6 * 5,
+      rDiskTexture,
+      texCoords: arrowTailTextureCoordinates,
+    );
   }
 
-  /// Draw arcs (shooting angle guides)
+  // ---------- Arcs ----------
+
   void drawArcs(Canvas canvas, Size size) {
     drawArcHead(canvas, size, arcAngle, 1);
     drawArcHead(canvas, size, arcAngle + MeshData.ARG_ANGLE_LIMIT - 1.5, -1);
     drawArcHead(canvas, size, arcAngle + 180, 1);
-    drawArcHead(canvas, size, arcAngle + MeshData.ARG_ANGLE_LIMIT - 1.5 + 180, -1);
+    drawArcHead(
+      canvas,
+      size,
+      arcAngle + MeshData.ARG_ANGLE_LIMIT - 1.5 + 180,
+      -1,
+    );
 
     matrix.MatrixUtils.setIdentity(modelMatrix);
     matrix.MatrixUtils.rotate(modelMatrix, arcAngle, 0, 1, 0);
@@ -492,20 +552,20 @@ class GameRenderer {
     drawArcModel(canvas, size);
   }
 
-  void drawArcHead(Canvas canvas, Size size, double baseDegree, int side) {
+  void drawArcHead(Canvas canvas, Size size, double baseDegree, int sideSign) {
     matrix.MatrixUtils.setIdentity(modelMatrix);
     const xscale = 0.04;
     final yscale = MeshData.ARC_HEIGHT;
     const zscale = 0.04;
     final radius = (6.3 + 7.0) * MeshData.RADIUS / 2;
-    
-    matrix.MatrixUtils.rotate(modelMatrix, baseDegree - side * 90, 0, 1, 0);
+
+    matrix.MatrixUtils.rotate(modelMatrix, baseDegree - sideSign * 90, 0, 1, 0);
     matrix.MatrixUtils.scale(modelMatrix, xscale, yscale, zscale);
     matrix.MatrixUtils.translate(
       modelMatrix,
       0,
       MeshData.BOARD_TOP / yscale,
-      -side * radius / zscale,
+      -sideSign * radius / zscale,
     );
 
     drawArrowHead(canvas, size);
@@ -516,37 +576,58 @@ class GameRenderer {
     _drawColoredMesh(canvas, size, arcPositions, 0, 6 * limit * 3);
   }
 
-  /// Draw background (floor, walls, table legs)
+  // ---------- Background (floor, walls, legs) ----------
+
   void drawBackground(Canvas canvas, Size size) {
     // Floor
     matrix.MatrixUtils.setIdentity(modelMatrix);
-    matrix.MatrixUtils.translate(modelMatrix, -MeshData.FLOOR_WIDTH / 2, -1,
-        -MeshData.FLOOR_WIDTH / 2);
+    matrix.MatrixUtils.translate(
+      modelMatrix,
+      -MeshData.FLOOR_WIDTH / 2,
+      -1,
+      -MeshData.FLOOR_WIDTH / 2,
+    );
     drawFloor(canvas, size);
 
-    // Walls (4 walls)
+    // Walls (same transforms as Java)
     matrix.MatrixUtils.setIdentity(modelMatrix);
     matrix.MatrixUtils.rotate(modelMatrix, 90, 1, 0, 0);
-    matrix.MatrixUtils.translate(modelMatrix, -MeshData.FLOOR_WIDTH / 2,
-        -MeshData.FLOOR_WIDTH / 2, -MeshData.FLOOR_WIDTH + 2);
+    matrix.MatrixUtils.translate(
+      modelMatrix,
+      -MeshData.FLOOR_WIDTH / 2,
+      -MeshData.FLOOR_WIDTH / 2,
+      -MeshData.FLOOR_WIDTH + 2,
+    );
     drawWall(canvas, size);
 
     matrix.MatrixUtils.setIdentity(modelMatrix);
     matrix.MatrixUtils.rotate(modelMatrix, 90, -1, 0, 0);
     matrix.MatrixUtils.translate(
-        modelMatrix, -MeshData.FLOOR_WIDTH / 2, -MeshData.FLOOR_WIDTH / 2, -2);
+      modelMatrix,
+      -MeshData.FLOOR_WIDTH / 2,
+      -MeshData.FLOOR_WIDTH / 2,
+      -2,
+    );
     drawWall(canvas, size);
 
     matrix.MatrixUtils.setIdentity(modelMatrix);
     matrix.MatrixUtils.rotate(modelMatrix, 90, 0, 0, 1);
     matrix.MatrixUtils.translate(
-        modelMatrix, -2, -MeshData.FLOOR_WIDTH / 2, -MeshData.FLOOR_WIDTH / 2);
+      modelMatrix,
+      -2,
+      -MeshData.FLOOR_WIDTH / 2,
+      -MeshData.FLOOR_WIDTH / 2,
+    );
     drawWall(canvas, size);
 
     matrix.MatrixUtils.setIdentity(modelMatrix);
     matrix.MatrixUtils.rotate(modelMatrix, 90, 0, 0, -1);
-    matrix.MatrixUtils.translate(modelMatrix, -MeshData.FLOOR_WIDTH + 2,
-        -MeshData.FLOOR_WIDTH / 2, -MeshData.FLOOR_WIDTH / 2);
+    matrix.MatrixUtils.translate(
+      modelMatrix,
+      -MeshData.FLOOR_WIDTH + 2,
+      -MeshData.FLOOR_WIDTH / 2,
+      -MeshData.FLOOR_WIDTH / 2,
+    );
     drawWall(canvas, size);
 
     // Table legs (4 legs)
@@ -565,202 +646,267 @@ class GameRenderer {
   }
 
   void drawFloor(Canvas canvas, Size size) {
-    _drawMesh(canvas, size, floorPositions, 0,
-        6 * MeshData.FLOOR_SECTIONS * MeshData.FLOOR_SECTIONS, floorTexture,
-        texCoords: floorTextureCoordinates);
+    _drawMesh(
+      canvas,
+      size,
+      floorPositions,
+      0,
+      6 * MeshData.FLOOR_SECTIONS * MeshData.FLOOR_SECTIONS,
+      floorTexture,
+      texCoords: floorTextureCoordinates,
+    );
   }
 
   void drawWall(Canvas canvas, Size size) {
-    _drawMesh(canvas, size, floorPositions, 0,
-        6 * MeshData.FLOOR_SECTIONS * MeshData.FLOOR_SECTIONS, wallTexture,
-        texCoords: floorTextureCoordinates);
+    _drawMesh(
+      canvas,
+      size,
+      floorPositions,
+      0,
+      6 * MeshData.FLOOR_SECTIONS * MeshData.FLOOR_SECTIONS,
+      wallTexture,
+      texCoords: floorTextureCoordinates,
+    );
   }
 
   void drawTableLeg(Canvas canvas, Size size) {
-    _drawMesh(canvas, size, arrowTailPositions, 0, 6 * 6, chairLegTexture,
-        texCoords: arrowTailTextureCoordinates);
+    _drawMesh(
+      canvas,
+      size,
+      arrowTailPositions,
+      0,
+      6 * 6,
+      chairLegTexture,
+      texCoords: arrowTailTextureCoordinates,
+    );
   }
 
-  /// Helper method to draw a mesh with texture
-  void _drawMesh(Canvas canvas, Size size, Float32List positions, int offset,
-      int vertexCount, ui.Image? texture, {Float32List? texCoords}) {
-    if (texture == null) {
-      return;
-    }
+  // ---------- Core draw helpers ----------
 
-    // Calculate MVP matrix
-    try {
-      matrix.MatrixUtils.multiplyMM(mvMatrix, viewMatrix, modelMatrix);
-      matrix.MatrixUtils.multiplyMM(mvpMatrix, projectionMatrix, mvMatrix);
-    } catch (e) {
-      print("ERROR in matrix multiply: $e");
-      return;
-    }
+  void _drawMesh(
+    Canvas canvas,
+    Size size,
+    Float32List positions,
+    int offset,
+    int vertexCount,
+    ui.Image? texture, {
+    Float32List? texCoords,
+  }) {
+    if (texture == null) return;
 
-    // Transform vertices and draw
-    _drawTransformedMesh(canvas, size, positions, offset, vertexCount, texture, mvpMatrix, texCoords: texCoords);
+    // mv = view * model
+    matrix.MatrixUtils.multiplyMM(mvMatrix, viewMatrix, modelMatrix);
+    // mvp = projection * mv
+    matrix.MatrixUtils.multiplyMM(mvpMatrix, projectionMatrix, mvMatrix);
+
+    _drawTransformedMesh(
+      canvas,
+      size,
+      positions,
+      offset,
+      vertexCount,
+      texture,
+      mvpMatrix,
+      texCoords: texCoords,
+    );
   }
 
-  /// Helper method to draw colored mesh (for transparent objects)
-  void _drawColoredMesh(Canvas canvas, Size size, Float32List positions,
-      int offset, int vertexCount) {
-    // Calculate MVP matrix
+  void _drawColoredMesh(
+    Canvas canvas,
+    Size size,
+    Float32List positions,
+    int offset,
+    int vertexCount,
+  ) {
     matrix.MatrixUtils.multiplyMM(mvMatrix, viewMatrix, modelMatrix);
     matrix.MatrixUtils.multiplyMM(mvpMatrix, projectionMatrix, mvMatrix);
 
-    // Transform vertices and draw with color
-    _drawTransformedColoredMesh(canvas, size, positions, offset, vertexCount, mvpMatrix);
+    _drawTransformedColoredMesh(
+      canvas,
+      size,
+      positions,
+      offset,
+      vertexCount,
+      mvpMatrix,
+    );
   }
 
-  /// Transform vertices and draw to canvas using drawVertices for proper UV mapping
-  void _drawTransformedMesh(Canvas canvas, Size size, Float32List positions,
-      int offset, int vertexCount, ui.Image texture, Float32List mvp, {Float32List? texCoords}) {
-    
-    // Prepare lists for vertices
+  void _drawTransformedMesh(
+    Canvas canvas,
+    Size size,
+    Float32List positions,
+    int offset,
+    int vertexCount,
+    ui.Image texture,
+    Float32List mvp, {
+    Float32List? texCoords,
+  }) {
     final List<Offset> vertices = [];
     final List<Offset> textureCoordinates = [];
     final List<int> indices = [];
-    
+
     int vertexIndex = 0;
-    
-    // Process triangles
+
     for (int i = 0; i < vertexCount; i += 3) {
       final idx = (offset + i) * 3;
       if (idx + 8 >= positions.length) break;
 
-      // Transform 3 vertices
       final v1 = matrix.MatrixUtils.transformPoint(
-          mvp, positions[idx], positions[idx + 1], positions[idx + 2]);
+        mvp,
+        positions[idx],
+        positions[idx + 1],
+        positions[idx + 2],
+      );
       final v2 = matrix.MatrixUtils.transformPoint(
-          mvp, positions[idx + 3], positions[idx + 4], positions[idx + 5]);
+        mvp,
+        positions[idx + 3],
+        positions[idx + 4],
+        positions[idx + 5],
+      );
       final v3 = matrix.MatrixUtils.transformPoint(
-          mvp, positions[idx + 6], positions[idx + 7], positions[idx + 8]);
+        mvp,
+        positions[idx + 6],
+        positions[idx + 7],
+        positions[idx + 8],
+      );
 
-      // Simple z-clipping
-      if (v1[2] < -2 || v1[2] > 2 || v2[2] < -2 || v2[2] > 2 || v3[2] < -2 || v3[2] > 2) {
+      // basic z clipping similar spirit to depth test
+      if (v1[2] < -2 ||
+          v1[2] > 2 ||
+          v2[2] < -2 ||
+          v2[2] > 2 ||
+          v3[2] < -2 ||
+          v3[2] > 2) {
         continue;
       }
 
-      // Skip triangles behind camera
       if (v1[2] > 0.9 && v2[2] > 0.9 && v3[2] > 0.9) {
         continue;
       }
 
-      // Convert to screen coordinates
       final p1 = _toScreen(v1, size);
       final p2 = _toScreen(v2, size);
       final p3 = _toScreen(v3, size);
 
-      // Add vertices
-      vertices.add(p1);
-      vertices.add(p2);
-      vertices.add(p3);
+      vertices.addAll([p1, p2, p3]);
 
-      // Add texture coordinates if available
       if (texCoords != null && texCoords.length > (offset + i) * 2 + 5) {
         final uvIdx = (offset + i) * 2;
-        final texWidth = texture.width.toDouble();
-        final texHeight = texture.height.toDouble();
-        
-        // Convert normalized UV (0-1) to texture pixel coordinates
-        textureCoordinates.add(Offset(
-          texCoords[uvIdx] * texWidth,
-          texCoords[uvIdx + 1] * texHeight,
-        ));
-        textureCoordinates.add(Offset(
-          texCoords[uvIdx + 2] * texWidth,
-          texCoords[uvIdx + 3] * texHeight,
-        ));
-        textureCoordinates.add(Offset(
-          texCoords[uvIdx + 4] * texWidth,
-          texCoords[uvIdx + 5] * texHeight,
-        ));
+        final tw = texture.width.toDouble();
+        final th = texture.height.toDouble();
+
+        textureCoordinates.addAll([
+          Offset(texCoords[uvIdx] * tw, texCoords[uvIdx + 1] * th),
+          Offset(texCoords[uvIdx + 2] * tw, texCoords[uvIdx + 3] * th),
+          Offset(texCoords[uvIdx + 4] * tw, texCoords[uvIdx + 5] * th),
+        ]);
       } else {
-        // Default UVs if not provided
-        textureCoordinates.add(const Offset(0, 0));
-        textureCoordinates.add(Offset(texture.width.toDouble(), 0));
-        textureCoordinates.add(Offset(0, texture.height.toDouble()));
+        textureCoordinates.addAll([
+          const Offset(0, 0),
+          Offset(texture.width.toDouble(), 0),
+          Offset(0, texture.height.toDouble()),
+        ]);
       }
 
-      // Add indices for this triangle
-      indices.add(vertexIndex);
-      indices.add(vertexIndex + 1);
-      indices.add(vertexIndex + 2);
+      indices.addAll([vertexIndex, vertexIndex + 1, vertexIndex + 2]);
       vertexIndex += 3;
     }
 
-    // Draw all triangles in one call using drawVertices
-    if (vertices.isNotEmpty) {
-      final paint = Paint()
-        ..isAntiAlias = true
-        ..filterQuality = FilterQuality.high
-        ..shader = ImageShader(
-          texture,
-          TileMode.clamp,
-          TileMode.clamp,
-          Matrix4.identity().storage,
-        );
+    if (vertices.isEmpty) return;
 
-      canvas.drawVertices(
-        ui.Vertices(
-          ui.VertexMode.triangles,
-          vertices,
-          textureCoordinates: textureCoordinates,
-          indices: indices,
-        ),
-        BlendMode.srcOver,
-        paint,
-      );
-    }
+    final paint =
+        Paint()
+          ..isAntiAlias = true
+          ..filterQuality = FilterQuality.high
+          ..shader = ImageShader(
+            texture,
+            TileMode.clamp,
+            TileMode.clamp,
+            Matrix4.identity().storage,
+          );
+
+    canvas.drawVertices(
+      ui.Vertices(
+        ui.VertexMode.triangles,
+        vertices,
+        textureCoordinates: textureCoordinates,
+        indices: indices,
+      ),
+      BlendMode.srcOver,
+      paint,
+    );
   }
 
-  /// Draw colored mesh for transparent objects
-  void _drawTransformedColoredMesh(Canvas canvas, Size size, Float32List positions,
-      int offset, int vertexCount, Float32List mvp) {
-    final paint = Paint()
-      ..color = const Color(0x4D4D9FFF) // Semi-transparent light blue
-      ..style = PaintingStyle.fill;
+  void _drawTransformedColoredMesh(
+    Canvas canvas,
+    Size size,
+    Float32List positions,
+    int offset,
+    int vertexCount,
+    Float32List mvp,
+  ) {
+    final paint =
+        Paint()
+          // Match Java objectColors: (0.2,0.2,0.2,0.9) ≈ #E6333333
+          ..color = const Color(0xE6333333)
+          ..style = PaintingStyle.fill
+          // Approximate glBlendFunc(GL_ONE, GL_ONE)
+          ..blendMode = BlendMode.plus;
 
     for (int i = 0; i < vertexCount; i += 3) {
       final idx = (offset + i) * 3;
       if (idx + 8 >= positions.length) break;
 
       final v1 = matrix.MatrixUtils.transformPoint(
-          mvp, positions[idx], positions[idx + 1], positions[idx + 2]);
+        mvp,
+        positions[idx],
+        positions[idx + 1],
+        positions[idx + 2],
+      );
       final v2 = matrix.MatrixUtils.transformPoint(
-          mvp, positions[idx + 3], positions[idx + 4], positions[idx + 5]);
+        mvp,
+        positions[idx + 3],
+        positions[idx + 4],
+        positions[idx + 5],
+      );
       final v3 = matrix.MatrixUtils.transformPoint(
-          mvp, positions[idx + 6], positions[idx + 7], positions[idx + 8]);
+        mvp,
+        positions[idx + 6],
+        positions[idx + 7],
+        positions[idx + 8],
+      );
+
+      if (v1[2] < -2 ||
+          v1[2] > 2 ||
+          v2[2] < -2 ||
+          v2[2] > 2 ||
+          v3[2] < -2 ||
+          v3[2] > 2) {
+        continue;
+      }
+
+      if (v1[2] > 0.9 && v2[2] > 0.9 && v3[2] > 0.9) {
+        continue;
+      }
 
       final p1 = _toScreen(v1, size);
       final p2 = _toScreen(v2, size);
       final p3 = _toScreen(v3, size);
 
-      // More lenient z-clipping
-      if (v1[2] < -2 || v1[2] > 2 || v2[2] < -2 || v2[2] > 2 || v3[2] < -2 || v3[2] > 2) {
-        continue;
-      }
-
-      // Skip triangles behind camera
-      if (v1[2] > 0.9 && v2[2] > 0.9 && v3[2] > 0.9) {
-        continue;
-      }
-
-      final path = Path()
-        ..moveTo(p1.dx, p1.dy)
-        ..lineTo(p2.dx, p2.dy)
-        ..lineTo(p3.dx, p3.dy)
-        ..close();
+      final path =
+          Path()
+            ..moveTo(p1.dx, p1.dy)
+            ..lineTo(p2.dx, p2.dy)
+            ..lineTo(p3.dx, p3.dy)
+            ..close();
 
       canvas.drawPath(path, paint);
     }
   }
 
-  /// Convert normalized device coordinates to screen coordinates
   Offset _toScreen(List<double> ndc, Size size) {
     final x = (ndc[0] + 1) * size.width / 2;
     final y = (1 - ndc[1]) * size.height / 2;
     return Offset(x, y);
   }
 }
-
