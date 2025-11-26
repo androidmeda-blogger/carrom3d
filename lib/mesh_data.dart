@@ -675,5 +675,85 @@ class MeshData {
     renderer.floorTextureCoordinates = Float32List.fromList(
       floorTextureCoordinates,
     );
+
+    // -----------------------------
+    // Board Surface (Subdivided)
+    // -----------------------------
+    final boardSurfaceData = <double>[];
+    final boardSurfaceTexCoords = <double>[];
+    const int BOARD_SECTIONS = 10;
+    const double BOARD_INNER_MIN = -0.9;
+    const double BOARD_INNER_MAX = 0.9;
+    const double BOARD_SIZE = BOARD_INNER_MAX - BOARD_INNER_MIN;
+    const double BOARD_STEP = BOARD_SIZE / BOARD_SECTIONS;
+    const double BOARD_Y = 0.11; // Inner Bottom face Y
+
+    for (int i = 0; i < BOARD_SECTIONS; i++) {
+      for (int j = 0; j < BOARD_SECTIONS; j++) {
+        final x = BOARD_INNER_MIN + i * BOARD_STEP;
+        final z = BOARD_INNER_MIN + j * BOARD_STEP;
+
+        // vertices (2 triangles per square)
+        // Triangle 1: (x, z), (x+step, z), (x, z+step)
+        // Triangle 2: (x+step, z), (x+step, z+step), (x, z+step)
+        // Note: Z is negative in OpenGL usually, but here we use Z as forward/backward.
+        // Looking at existing data:
+        // Inner Bottom face:
+        // -0.9, 0.11, -0.9, //
+        // -0.9, 0.11, 0.9, //
+        // 0.9, 0.11, 0.9, //
+        // ...
+        // It seems Y is up.
+        // Let's match the winding order of the original "Inner Bottom face" (lines 143-148)
+        // -0.9, 0.11, -0.9, // (min, min)
+        // -0.9, 0.11, 0.9, // (min, max)
+        // 0.9, 0.11, 0.9, // (max, max)
+        // -0.9, 0.11, -0.9, // (min, min)
+        // 0.9, 0.11, 0.9, // (max, max)
+        // 0.9, 0.11, -0.9, // (max, min)
+
+        // So:
+        // (x, z), (x, z+step), (x+step, z+step)
+        // (x, z), (x+step, z+step), (x+step, z)
+
+        boardSurfaceData.addAll([
+          x, BOARD_Y, z, //
+          x, BOARD_Y, z + BOARD_STEP, //
+          x + BOARD_STEP, BOARD_Y, z + BOARD_STEP, //
+
+          x, BOARD_Y, z, //
+          x + BOARD_STEP, BOARD_Y, z + BOARD_STEP, //
+          x + BOARD_STEP, BOARD_Y, z, //
+        ]);
+
+        // Texture coordinates
+        // Map x from [-0.9, 0.9] to [0, 1]
+        // Map z from [-0.9, 0.9] to [0, 1]
+        // Note: Texture Y is usually flipped in OpenGL vs Image.
+        // Original "Inner Bottom face" tex coords (lines 320-326 in Java):
+        // 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0
+        // (0,0) -> (0,1) -> (1,1)
+        // (0,0) -> (1,1) -> (1,0)
+        // This matches (min, min) -> (min, max) -> (max, max) ...
+
+        double u(double val) => (val - BOARD_INNER_MIN) / BOARD_SIZE;
+        double v(double val) => (val - BOARD_INNER_MIN) / BOARD_SIZE;
+
+        boardSurfaceTexCoords.addAll([
+          u(x), v(z), //
+          u(x), v(z + BOARD_STEP), //
+          u(x + BOARD_STEP), v(z + BOARD_STEP), //
+
+          u(x), v(z), //
+          u(x + BOARD_STEP), v(z + BOARD_STEP), //
+          u(x + BOARD_STEP), v(z), //
+        ]);
+      }
+    }
+
+    renderer.boardSurfacePositions = Float32List.fromList(boardSurfaceData);
+    renderer.boardSurfaceTextureCoordinates = Float32List.fromList(
+      boardSurfaceTexCoords,
+    );
   }
 }

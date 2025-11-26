@@ -348,14 +348,25 @@ class MatrixUtils {
     Float32List matrix,
     Float32List vector,
   ) {
-    final x = vector[0];
-    final y = vector[1];
-    final z = vector[2];
-    final w = vector[3];
-
-    result[0] = matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12] * w;
-    result[1] = matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13] * w;
-    result[2] = matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14] * w;
-    result[3] = matrix[3] * x + matrix[7] * y + matrix[11] * z + matrix[15] * w;
+    result[0] =
+        matrix[0] * vector[0] +
+        matrix[4] * vector[1] +
+        matrix[8] * vector[2] +
+        matrix[12] * vector[3];
+    result[1] =
+        matrix[1] * vector[0] +
+        matrix[5] * vector[1] +
+        matrix[9] * vector[2] +
+        matrix[13] * vector[3];
+    result[2] =
+        matrix[2] * vector[0] +
+        matrix[6] * vector[1] +
+        matrix[10] * vector[2] +
+        matrix[14] * vector[3];
+    result[3] =
+        matrix[3] * vector[0] +
+        matrix[7] * vector[1] +
+        matrix[11] * vector[2] +
+        matrix[15] * vector[3];
   }
 }

@@ -30,6 +30,8 @@ class GameRenderer {
   late Float32List objectColors; // kept for completeness, but color is constant
   late Float32List floorPositions;
   late Float32List floorTextureCoordinates;
+  late Float32List boardSurfacePositions;
+  late Float32List boardSurfaceTextureCoordinates;
 
   // “Texture handles” -> images
   ui.Image? frameTexture;
@@ -350,11 +352,11 @@ class GameRenderer {
     _drawMesh(
       canvas,
       size,
-      cubePositions,
-      6 * 13,
-      6,
+      boardSurfacePositions,
+      0,
+      boardSurfacePositions.length ~/ 3,
       surfaceTexture,
-      texCoords: cubeTextureCoordinates,
+      texCoords: boardSurfaceTextureCoordinates,
     );
   }
 
