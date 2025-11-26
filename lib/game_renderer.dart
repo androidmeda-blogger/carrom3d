@@ -741,11 +741,8 @@ class GameRenderer {
     Float32List mvp, {
     Float32List? texCoords,
   }) {
-    final List<Offset> vertices = [];
-    final List<Offset> textureCoordinates = [];
-    final List<int> indices = [];
-
-    int vertexIndex = 0;
+    // 1. Transform all vertices and collect valid triangles
+    final List<_RenderTriangle> triangles = [];
 
     for (int i = 0; i < vertexCount; i += 3) {
       final idx = (offset + i) * 3;
@@ -770,7 +767,7 @@ class GameRenderer {
         positions[idx + 8],
       );
 
-      // basic z clipping similar spirit to depth test
+      // basic z clipping
       if (v1[2] < -2 ||
           v1[2] > 2 ||
           v2[2] < -2 ||
@@ -784,35 +781,51 @@ class GameRenderer {
         continue;
       }
 
+      final zDepth = (v1[2] + v2[2] + v3[2]) / 3.0;
+
       final p1 = _toScreen(v1, size);
       final p2 = _toScreen(v2, size);
       final p3 = _toScreen(v3, size);
 
-      vertices.addAll([p1, p2, p3]);
-
+      final List<Offset> uvs;
       if (texCoords != null && texCoords.length > (offset + i) * 2 + 5) {
         final uvIdx = (offset + i) * 2;
         final tw = texture.width.toDouble();
         final th = texture.height.toDouble();
 
-        textureCoordinates.addAll([
+        uvs = [
           Offset(texCoords[uvIdx] * tw, texCoords[uvIdx + 1] * th),
           Offset(texCoords[uvIdx + 2] * tw, texCoords[uvIdx + 3] * th),
           Offset(texCoords[uvIdx + 4] * tw, texCoords[uvIdx + 5] * th),
-        ]);
+        ];
       } else {
-        textureCoordinates.addAll([
+        uvs = [
           const Offset(0, 0),
           Offset(texture.width.toDouble(), 0),
           Offset(0, texture.height.toDouble()),
-        ]);
+        ];
       }
 
+      triangles.add(_RenderTriangle(zDepth, [p1, p2, p3], uvs));
+    }
+
+    if (triangles.isEmpty) return;
+
+    triangles.sort((a, b) => b.z.compareTo(a.z));
+
+    final List<Offset> vertices = [];
+    final List<Offset> textureCoordinates = [];
+    final List<int> indices = [];
+
+    int vertexIndex = 0;
+    for (final tri in triangles) {
+      vertices.addAll(tri.points);
+      if (tri.texCoords != null) {
+        textureCoordinates.addAll(tri.texCoords!);
+      }
       indices.addAll([vertexIndex, vertexIndex + 1, vertexIndex + 2]);
       vertexIndex += 3;
     }
-
-    if (vertices.isEmpty) return;
 
     final paint =
         Paint()
@@ -845,13 +858,7 @@ class GameRenderer {
     int vertexCount,
     Float32List mvp,
   ) {
-    final paint =
-        Paint()
-          // Match Java objectColors: (0.2,0.2,0.2,0.9) ≈ #E6333333
-          ..color = const Color(0xE6333333)
-          ..style = PaintingStyle.fill
-          // Approximate glBlendFunc(GL_ONE, GL_ONE)
-          ..blendMode = BlendMode.plus;
+    final List<_RenderTriangle> triangles = [];
 
     for (int i = 0; i < vertexCount; i += 3) {
       final idx = (offset + i) * 3;
@@ -889,19 +896,40 @@ class GameRenderer {
         continue;
       }
 
+      final zDepth = (v1[2] + v2[2] + v3[2]) / 3.0;
+
       final p1 = _toScreen(v1, size);
       final p2 = _toScreen(v2, size);
       final p3 = _toScreen(v3, size);
 
-      final path =
-          Path()
-            ..moveTo(p1.dx, p1.dy)
-            ..lineTo(p2.dx, p2.dy)
-            ..lineTo(p3.dx, p3.dy)
-            ..close();
-
-      canvas.drawPath(path, paint);
+      triangles.add(_RenderTriangle(zDepth, [p1, p2, p3], null));
     }
+
+    if (triangles.isEmpty) return;
+
+    triangles.sort((a, b) => b.z.compareTo(a.z));
+
+    final List<Offset> vertices = [];
+    final List<int> indices = [];
+
+    int vertexIndex = 0;
+    for (final tri in triangles) {
+      vertices.addAll(tri.points);
+      indices.addAll([vertexIndex, vertexIndex + 1, vertexIndex + 2]);
+      vertexIndex += 3;
+    }
+
+    final paint =
+        Paint()
+          ..color = const Color(0xE6333333)
+          ..style = PaintingStyle.fill
+          ..blendMode = BlendMode.plus;
+
+    canvas.drawVertices(
+      ui.Vertices(ui.VertexMode.triangles, vertices, indices: indices),
+      BlendMode.plus,
+      paint,
+    );
   }
 
   Offset _toScreen(List<double> ndc, Size size) {
@@ -909,4 +937,12 @@ class GameRenderer {
     final y = (1 - ndc[1]) * size.height / 2;
     return Offset(x, y);
   }
+}
+
+class _RenderTriangle {
+  final double z;
+  final List<Offset> points;
+  final List<Offset>? texCoords;
+
+  _RenderTriangle(this.z, this.points, this.texCoords);
 }
