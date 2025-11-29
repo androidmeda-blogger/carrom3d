@@ -252,6 +252,7 @@ class GameRenderer {
     drawBoardFace(canvas, size);
 
     // Pieces
+    final sortedPieces = <_PieceSortEntry>[];
     for (int i = 0; i < 20; i++) {
       if (presents[i] == 0) continue;
 
@@ -276,8 +277,27 @@ class GameRenderer {
         -yposPieces[i],
       );
 
+      // Calculate NDC Z
+      // Center of piece is (0,0,0) in local space
+      final ndcZ = _getNDC_Z(modelMatrix, 0, 0, 0);
+      sortedPieces.add(
+        _PieceSortEntry(i, ndcZ, Float32List.fromList(modelMatrix)),
+      );
+    }
+
+    // Sort by NDC Z descending (furthest first)
+    // In OpenGL NDC, -1 is near, 1 is far. So larger Z is further away.
+    // Wait, standard OpenGL depth range is -1 to 1.
+    // But Flutter/Skia might differ?
+    // Let's assume standard GL. If 1 is far, we want to draw 1 first.
+    // So descending sort.
+    sortedPieces.sort((a, b) => b.ndcZ.compareTo(a.ndcZ));
+
+    for (final entry in sortedPieces) {
+      // Restore model matrix
+      for (int k = 0; k < 16; k++) modelMatrix[k] = entry.matrix[k];
       // opaque cylinder
-      drawCylinder(canvas, size, i, false);
+      drawCylinder(canvas, size, entry.index, false);
     }
 
     // Cross (cancel)
@@ -581,70 +601,141 @@ class GameRenderer {
   // ---------- Background (floor, walls, legs) ----------
 
   void drawBackground(Canvas canvas, Size size) {
+    final elements = <_BackgroundElement>[];
+
+    // Helper to add element
+    void addElement(
+      Float32List m,
+      VoidCallback draw,
+      double localX,
+      double localY,
+      double localZ,
+    ) {
+      // Calculate NDC Z
+      final ndcZ = _getNDC_Z(m, localX, localY, localZ);
+      elements.add(_BackgroundElement(m, draw, ndcZ));
+    }
+
     // Floor
-    matrix.MatrixUtils.setIdentity(modelMatrix);
-    matrix.MatrixUtils.translate(
-      modelMatrix,
-      -MeshData.FLOOR_WIDTH / 2,
-      -1,
-      -MeshData.FLOOR_WIDTH / 2,
-    );
-    drawFloor(canvas, size);
+    {
+      final m = matrix.MatrixUtils.identity();
+      matrix.MatrixUtils.translate(
+        m,
+        -MeshData.FLOOR_WIDTH / 2,
+        -1,
+        -MeshData.FLOOR_WIDTH / 2,
+      );
+      addElement(
+        m,
+        () => drawFloor(canvas, size),
+        MeshData.FLOOR_WIDTH / 2,
+        0,
+        MeshData.FLOOR_WIDTH / 2,
+      );
+    }
 
-    // Walls (same transforms as Java)
-    matrix.MatrixUtils.setIdentity(modelMatrix);
-    matrix.MatrixUtils.rotate(modelMatrix, 90, 1, 0, 0);
-    matrix.MatrixUtils.translate(
-      modelMatrix,
-      -MeshData.FLOOR_WIDTH / 2,
-      -MeshData.FLOOR_WIDTH / 2,
-      -MeshData.FLOOR_WIDTH + 2,
-    );
-    drawWall(canvas, size);
+    // Walls
+    // Wall 1
+    {
+      final m = matrix.MatrixUtils.identity();
+      matrix.MatrixUtils.rotate(m, 90, 1, 0, 0);
+      matrix.MatrixUtils.translate(
+        m,
+        -MeshData.FLOOR_WIDTH / 2,
+        -MeshData.FLOOR_WIDTH / 2,
+        -MeshData.FLOOR_WIDTH + 2,
+      );
+      addElement(
+        m,
+        () => drawWall(canvas, size),
+        MeshData.FLOOR_WIDTH / 2,
+        0,
+        MeshData.FLOOR_WIDTH / 2,
+      );
+    }
 
-    matrix.MatrixUtils.setIdentity(modelMatrix);
-    matrix.MatrixUtils.rotate(modelMatrix, 90, -1, 0, 0);
-    matrix.MatrixUtils.translate(
-      modelMatrix,
-      -MeshData.FLOOR_WIDTH / 2,
-      -MeshData.FLOOR_WIDTH / 2,
-      -2,
-    );
-    drawWall(canvas, size);
+    // Wall 2
+    {
+      final m = matrix.MatrixUtils.identity();
+      matrix.MatrixUtils.rotate(m, 90, -1, 0, 0);
+      matrix.MatrixUtils.translate(
+        m,
+        -MeshData.FLOOR_WIDTH / 2,
+        -MeshData.FLOOR_WIDTH / 2,
+        -2,
+      );
+      addElement(
+        m,
+        () => drawWall(canvas, size),
+        MeshData.FLOOR_WIDTH / 2,
+        0,
+        MeshData.FLOOR_WIDTH / 2,
+      );
+    }
 
-    matrix.MatrixUtils.setIdentity(modelMatrix);
-    matrix.MatrixUtils.rotate(modelMatrix, 90, 0, 0, 1);
-    matrix.MatrixUtils.translate(
-      modelMatrix,
-      -2,
-      -MeshData.FLOOR_WIDTH / 2,
-      -MeshData.FLOOR_WIDTH / 2,
-    );
-    drawWall(canvas, size);
+    // Wall 3
+    {
+      final m = matrix.MatrixUtils.identity();
+      matrix.MatrixUtils.rotate(m, 90, 0, 0, 1);
+      matrix.MatrixUtils.translate(
+        m,
+        -2,
+        -MeshData.FLOOR_WIDTH / 2,
+        -MeshData.FLOOR_WIDTH / 2,
+      );
+      addElement(
+        m,
+        () => drawWall(canvas, size),
+        MeshData.FLOOR_WIDTH / 2,
+        0,
+        MeshData.FLOOR_WIDTH / 2,
+      );
+    }
 
-    matrix.MatrixUtils.setIdentity(modelMatrix);
-    matrix.MatrixUtils.rotate(modelMatrix, 90, 0, 0, -1);
-    matrix.MatrixUtils.translate(
-      modelMatrix,
-      -MeshData.FLOOR_WIDTH + 2,
-      -MeshData.FLOOR_WIDTH / 2,
-      -MeshData.FLOOR_WIDTH / 2,
-    );
-    drawWall(canvas, size);
+    // Wall 4
+    {
+      final m = matrix.MatrixUtils.identity();
+      matrix.MatrixUtils.rotate(m, 90, 0, 0, -1);
+      matrix.MatrixUtils.translate(
+        m,
+        -MeshData.FLOOR_WIDTH + 2,
+        -MeshData.FLOOR_WIDTH / 2,
+        -MeshData.FLOOR_WIDTH / 2,
+      );
+      addElement(
+        m,
+        () => drawWall(canvas, size),
+        MeshData.FLOOR_WIDTH / 2,
+        0,
+        MeshData.FLOOR_WIDTH / 2,
+      );
+    }
 
-    // Table legs (4 legs)
-    _drawTableLeg(canvas, size, 0, -4, -8);
-    _drawTableLeg(canvas, size, 0, -4, 8);
-    _drawTableLeg(canvas, size, 0, 4, -8);
-    _drawTableLeg(canvas, size, 0, 4, 8);
-  }
+    // Table legs
+    void addLeg(double x, double y, double z) {
+      final m = matrix.MatrixUtils.identity();
+      matrix.MatrixUtils.rotate(m, -90, 0, 0, 1);
+      matrix.MatrixUtils.scale(m, 1, 0.1, 0.05);
+      matrix.MatrixUtils.translate(m, x, y, z);
+      addElement(m, () => drawTableLeg(canvas, size), 0, 0, 0.5);
+    }
 
-  void _drawTableLeg(Canvas canvas, Size size, double x, double y, double z) {
-    matrix.MatrixUtils.setIdentity(modelMatrix);
-    matrix.MatrixUtils.rotate(modelMatrix, -90, 0, 0, 1);
-    matrix.MatrixUtils.scale(modelMatrix, 1, 0.1, 0.05);
-    matrix.MatrixUtils.translate(modelMatrix, x, y, z);
-    drawTableLeg(canvas, size);
+    addLeg(0, -4, -8);
+    addLeg(0, -4, 8);
+    addLeg(0, 4, -8);
+    addLeg(0, 4, 8);
+
+    // Sort by NDC Z descending (furthest first)
+    elements.sort((a, b) => b.ndcZ.compareTo(a.ndcZ));
+
+    // Draw
+    for (final el in elements) {
+      // Copy matrix to modelMatrix
+      for (int i = 0; i < 16; i++) {
+        modelMatrix[i] = el.matrix[i];
+      }
+      el.draw();
+    }
   }
 
   void drawFloor(Canvas canvas, Size size) {
@@ -947,4 +1038,38 @@ class _RenderTriangle {
   final List<Offset>? texCoords;
 
   _RenderTriangle(this.z, this.points, this.texCoords);
+}
+
+class _PieceSortEntry {
+  final int index;
+  final double ndcZ;
+  final Float32List matrix;
+
+  _PieceSortEntry(this.index, this.ndcZ, this.matrix);
+}
+
+// Helper for sorting
+extension GameRendererHelpers on GameRenderer {
+  double _getNDC_Z(Float32List modelM, double x, double y, double z) {
+    // MVP = Projection * View * Model
+    final vp = Float32List(16);
+    matrix.MatrixUtils.multiplyMM(vp, projectionMatrix, viewMatrix);
+
+    final mvp = Float32List(16);
+    matrix.MatrixUtils.multiplyMM(mvp, vp, modelM);
+
+    final w = mvp[3] * x + mvp[7] * y + mvp[11] * z + mvp[15];
+    final z_clip = mvp[2] * x + mvp[6] * y + mvp[10] * z + mvp[14];
+
+    if (w == 0) return 0;
+    return z_clip / w;
+  }
+}
+
+class _BackgroundElement {
+  final Float32List matrix;
+  final VoidCallback draw;
+  final double ndcZ;
+
+  _BackgroundElement(this.matrix, this.draw, this.ndcZ);
 }
