@@ -600,20 +600,32 @@ class GameRenderer {
 
   // ---------- Background (floor, walls, legs) ----------
 
-  void drawBackground(Canvas canvas, Size size) {
-    final elements = <_BackgroundElement>[];
+  // ---------- Background (floor, walls, legs) ----------
 
-    // Helper to add element
-    void addElement(
+  void drawBackground(Canvas canvas, Size size) {
+    final List<_RenderTriangle> backgroundTriangles = [];
+
+    // Helper to collect triangles
+    void collect(
       Float32List m,
-      VoidCallback draw,
-      double localX,
-      double localY,
-      double localZ,
+      Float32List positions,
+      ui.Image? texture,
+      Float32List texCoords,
     ) {
-      // Calculate NDC Z
-      final ndcZ = _getNDC_Z(m, localX, localY, localZ);
-      elements.add(_BackgroundElement(m, draw, ndcZ));
+      // Calculate MVP for this object
+      matrix.MatrixUtils.multiplyMM(mvMatrix, viewMatrix, m);
+      matrix.MatrixUtils.multiplyMM(mvpMatrix, projectionMatrix, mvMatrix);
+
+      _collectTriangles(
+        backgroundTriangles,
+        positions,
+        0,
+        positions.length ~/ 3,
+        texture,
+        mvpMatrix,
+        size,
+        texCoords: texCoords,
+      );
     }
 
     // Floor
@@ -625,12 +637,18 @@ class GameRenderer {
         -1,
         -MeshData.FLOOR_WIDTH / 2,
       );
-      addElement(
-        m,
-        () => drawFloor(canvas, size),
-        MeshData.FLOOR_WIDTH / 2,
+      // Draw floor immediately (always behind walls/legs)
+      matrix.MatrixUtils.multiplyMM(mvMatrix, viewMatrix, m);
+      matrix.MatrixUtils.multiplyMM(mvpMatrix, projectionMatrix, mvMatrix);
+      _drawTransformedMesh(
+        canvas,
+        size,
+        floorPositions,
         0,
-        MeshData.FLOOR_WIDTH / 2,
+        floorPositions.length ~/ 3,
+        floorTexture!,
+        mvpMatrix,
+        texCoords: floorTextureCoordinates,
       );
     }
 
@@ -645,13 +663,7 @@ class GameRenderer {
         -MeshData.FLOOR_WIDTH / 2,
         -MeshData.FLOOR_WIDTH + 2,
       );
-      addElement(
-        m,
-        () => drawWall(canvas, size),
-        MeshData.FLOOR_WIDTH / 2,
-        0,
-        MeshData.FLOOR_WIDTH / 2,
-      );
+      collect(m, floorPositions, wallTexture, floorTextureCoordinates);
     }
 
     // Wall 2
@@ -664,13 +676,7 @@ class GameRenderer {
         -MeshData.FLOOR_WIDTH / 2,
         -2,
       );
-      addElement(
-        m,
-        () => drawWall(canvas, size),
-        MeshData.FLOOR_WIDTH / 2,
-        0,
-        MeshData.FLOOR_WIDTH / 2,
-      );
+      collect(m, floorPositions, wallTexture, floorTextureCoordinates);
     }
 
     // Wall 3
@@ -683,13 +689,7 @@ class GameRenderer {
         -MeshData.FLOOR_WIDTH / 2,
         -MeshData.FLOOR_WIDTH / 2,
       );
-      addElement(
-        m,
-        () => drawWall(canvas, size),
-        MeshData.FLOOR_WIDTH / 2,
-        0,
-        MeshData.FLOOR_WIDTH / 2,
-      );
+      collect(m, floorPositions, wallTexture, floorTextureCoordinates);
     }
 
     // Wall 4
@@ -702,40 +702,46 @@ class GameRenderer {
         -MeshData.FLOOR_WIDTH / 2,
         -MeshData.FLOOR_WIDTH / 2,
       );
-      addElement(
-        m,
-        () => drawWall(canvas, size),
-        MeshData.FLOOR_WIDTH / 2,
-        0,
-        MeshData.FLOOR_WIDTH / 2,
-      );
+      collect(m, floorPositions, wallTexture, floorTextureCoordinates);
     }
 
     // Table legs
-    void addLeg(double x, double y, double z) {
+    void collectLeg(double x, double y, double z) {
       final m = matrix.MatrixUtils.identity();
       matrix.MatrixUtils.rotate(m, -90, 0, 0, 1);
       matrix.MatrixUtils.scale(m, 1, 0.1, 0.05);
       matrix.MatrixUtils.translate(m, x, y, z);
-      addElement(m, () => drawTableLeg(canvas, size), 0, 0, 0.5);
+
+      // Legs use arrowTailPositions (cube-like) and no texture in original code?
+      // Wait, original code used _drawTableLeg which used arrowTailPositions.
+      // And it used chairLegTexture?
+      // Let's check definitions.
+      // drawTableLeg uses arrowTailPositions.
+      // Texture?
+      // In Java: drawTableLeg uses chairLegTexture.
+      // In Dart: drawTableLeg uses arrowTailPositions and... wait, I need to check what texture it used.
+      // In my previous view of drawTableLeg (lines 694-702), it used arrowTailPositions.
+      // Texture? It wasn't shown in the snippet but likely chairLegTexture.
+      // Let's assume chairLegTexture and arrowTailTextureCoordinates.
+
+      collect(
+        m,
+        arrowTailPositions,
+        chairLegTexture,
+        arrowTailTextureCoordinates,
+      );
     }
 
-    addLeg(0, -4, -8);
-    addLeg(0, -4, 8);
-    addLeg(0, 4, -8);
-    addLeg(0, 4, 8);
+    collectLeg(0, -4, -8);
+    collectLeg(0, -4, 8);
+    collectLeg(0, 4, -8);
+    collectLeg(0, 4, 8);
 
-    // Sort by NDC Z descending (furthest first)
-    elements.sort((a, b) => b.ndcZ.compareTo(a.ndcZ));
+    // Sort all background triangles by depth (far to near)
+    backgroundTriangles.sort((a, b) => b.z.compareTo(a.z));
 
-    // Draw
-    for (final el in elements) {
-      // Copy matrix to modelMatrix
-      for (int i = 0; i < 16; i++) {
-        modelMatrix[i] = el.matrix[i];
-      }
-      el.draw();
-    }
+    // Draw them
+    _drawSortedTriangles(canvas, backgroundTriangles);
   }
 
   void drawFloor(Canvas canvas, Size size) {
@@ -824,19 +830,16 @@ class GameRenderer {
     );
   }
 
-  void _drawTransformedMesh(
-    Canvas canvas,
-    Size size,
+  void _collectTriangles(
+    List<_RenderTriangle> triangles,
     Float32List positions,
     int offset,
     int vertexCount,
-    ui.Image texture,
-    Float32List mvp, {
+    ui.Image? texture,
+    Float32List mvp,
+    Size size, {
     Float32List? texCoords,
   }) {
-    // 1. Transform all vertices and collect valid triangles
-    final List<_RenderTriangle> triangles = [];
-
     for (int i = 0; i < vertexCount; i += 3) {
       final idx = (offset + i) * 3;
       if (idx + 8 >= positions.length) break;
@@ -880,38 +883,101 @@ class GameRenderer {
       final p2 = _toScreen(v2, size);
       final p3 = _toScreen(v3, size);
 
-      final List<Offset> uvs;
-      if (texCoords != null && texCoords.length > (offset + i) * 2 + 5) {
-        final uvIdx = (offset + i) * 2;
-        final tw = texture.width.toDouble();
-        final th = texture.height.toDouble();
+      final List<Offset>? uvs;
+      if (texture != null) {
+        if (texCoords != null && texCoords.length > (offset + i) * 2 + 5) {
+          final uvIdx = (offset + i) * 2;
+          final tw = texture.width.toDouble();
+          final th = texture.height.toDouble();
 
-        uvs = [
-          Offset(texCoords[uvIdx] * tw, texCoords[uvIdx + 1] * th),
-          Offset(texCoords[uvIdx + 2] * tw, texCoords[uvIdx + 3] * th),
-          Offset(texCoords[uvIdx + 4] * tw, texCoords[uvIdx + 5] * th),
-        ];
+          uvs = [
+            Offset(texCoords[uvIdx] * tw, texCoords[uvIdx + 1] * th),
+            Offset(texCoords[uvIdx + 2] * tw, texCoords[uvIdx + 3] * th),
+            Offset(texCoords[uvIdx + 4] * tw, texCoords[uvIdx + 5] * th),
+          ];
+        } else {
+          uvs = [
+            const Offset(0, 0),
+            Offset(texture.width.toDouble(), 0),
+            Offset(0, texture.height.toDouble()),
+          ];
+        }
       } else {
-        uvs = [
-          const Offset(0, 0),
-          Offset(texture.width.toDouble(), 0),
-          Offset(0, texture.height.toDouble()),
-        ];
+        uvs = null;
       }
 
-      triangles.add(_RenderTriangle(zDepth, [p1, p2, p3], uvs));
+      triangles.add(_RenderTriangle(zDepth, [p1, p2, p3], uvs, texture));
     }
+  }
+
+  void _drawTransformedMesh(
+    Canvas canvas,
+    Size size,
+    Float32List positions,
+    int offset,
+    int vertexCount,
+    ui.Image texture,
+    Float32List mvp, {
+    Float32List? texCoords,
+  }) {
+    // 1. Transform all vertices and collect valid triangles
+    final List<_RenderTriangle> triangles = [];
+    _collectTriangles(
+      triangles,
+      positions,
+      offset,
+      vertexCount,
+      texture,
+      mvp,
+      size,
+      texCoords: texCoords,
+    );
 
     if (triangles.isEmpty) return;
 
     triangles.sort((a, b) => b.z.compareTo(a.z));
+    _drawSortedTriangles(canvas, triangles);
+  }
 
+  void _drawSortedTriangles(Canvas canvas, List<_RenderTriangle> triangles) {
+    if (triangles.isEmpty) return;
+
+    // Simple batching: group by texture
+    int startIndex = 0;
+    while (startIndex < triangles.length) {
+      final currentTexture = triangles[startIndex].texture;
+      int endIndex = startIndex + 1;
+
+      while (endIndex < triangles.length &&
+          triangles[endIndex].texture == currentTexture) {
+        endIndex++;
+      }
+
+      _drawTriangleBatch(
+        canvas,
+        triangles,
+        startIndex,
+        endIndex,
+        currentTexture,
+      );
+      startIndex = endIndex;
+    }
+  }
+
+  void _drawTriangleBatch(
+    Canvas canvas,
+    List<_RenderTriangle> triangles,
+    int start,
+    int end,
+    ui.Image? texture,
+  ) {
     final List<Offset> vertices = [];
     final List<Offset> textureCoordinates = [];
     final List<int> indices = [];
 
     int vertexIndex = 0;
-    for (final tri in triangles) {
+    for (int i = start; i < end; i++) {
+      final tri = triangles[i];
       vertices.addAll(tri.points);
       if (tri.texCoords != null) {
         textureCoordinates.addAll(tri.texCoords!);
@@ -923,19 +989,26 @@ class GameRenderer {
     final paint =
         Paint()
           ..isAntiAlias = true
-          ..filterQuality = FilterQuality.high
-          ..shader = ImageShader(
-            texture,
-            TileMode.clamp,
-            TileMode.clamp,
-            Matrix4.identity().storage,
-          );
+          ..filterQuality = FilterQuality.high;
+
+    if (texture != null) {
+      paint.shader = ImageShader(
+        texture,
+        TileMode.clamp,
+        TileMode.clamp,
+        Matrix4.identity().storage,
+      );
+    } else {
+      // Fallback color if no texture (shouldn't happen for background)
+      paint.color = Colors.grey;
+    }
 
     canvas.drawVertices(
       ui.Vertices(
         ui.VertexMode.triangles,
         vertices,
-        textureCoordinates: textureCoordinates,
+        textureCoordinates:
+            textureCoordinates.isNotEmpty ? textureCoordinates : null,
         indices: indices,
       ),
       BlendMode.srcOver,
@@ -995,7 +1068,7 @@ class GameRenderer {
       final p2 = _toScreen(v2, size);
       final p3 = _toScreen(v3, size);
 
-      triangles.add(_RenderTriangle(zDepth, [p1, p2, p3], null));
+      triangles.add(_RenderTriangle(zDepth, [p1, p2, p3], null, null));
     }
 
     if (triangles.isEmpty) return;
@@ -1036,8 +1109,9 @@ class _RenderTriangle {
   final double z;
   final List<Offset> points;
   final List<Offset>? texCoords;
+  final ui.Image? texture;
 
-  _RenderTriangle(this.z, this.points, this.texCoords);
+  _RenderTriangle(this.z, this.points, this.texCoords, this.texture);
 }
 
 class _PieceSortEntry {
@@ -1064,12 +1138,4 @@ extension GameRendererHelpers on GameRenderer {
     if (w == 0) return 0;
     return z_clip / w;
   }
-}
-
-class _BackgroundElement {
-  final Float32List matrix;
-  final VoidCallback draw;
-  final double ndcZ;
-
-  _BackgroundElement(this.matrix, this.draw, this.ndcZ);
 }
