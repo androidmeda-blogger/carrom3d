@@ -994,8 +994,8 @@ class GameRenderer {
     if (texture != null) {
       paint.shader = ImageShader(
         texture,
-        TileMode.clamp,
-        TileMode.clamp,
+        TileMode.repeated,
+        TileMode.repeated,
         Matrix4.identity().storage,
       );
     } else {
