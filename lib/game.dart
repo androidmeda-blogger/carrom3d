@@ -81,7 +81,11 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       showResults = false;
       hideResultsBox();
 
-      // Load textures first
+      // Load shaders and textures
+      print("Loading shaders...");
+      await gameRenderer.loadShaders();
+      print("Shaders loaded successfully");
+      
       print("Loading textures...");
       await gameRenderer.loadTextures();
       print("Textures loaded successfully");

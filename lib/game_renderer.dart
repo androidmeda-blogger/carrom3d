@@ -53,6 +53,37 @@ class GameRenderer {
   ui.Image? blackBorderTexture;
   ui.Image? redBorderTexture;
 
+  // Shader programs
+  ui.FragmentShader? postProcessShader; // Post-processing lighting shader
+  ui.FragmentShader? colorShader;       // Used for solid-color shapes
+
+  // Post-processing / lighting parameters
+  bool enablePostProcessing = true;
+  
+  // Directional light from left-top at an angle
+  // Light direction vector (pointing TO light source, normalized)
+  // (-0.6, -0.4, 0.7) means light comes from left (-X), top (-Y), and above (+Z)
+  double lightDirX = -0.6;   // Light from left side
+  double lightDirY = -0.4;   // Light from top
+  double lightDirZ = 0.7;    // Light from above
+  
+  double ambient = 0.35;     // Ambient light (0-1) - base illumination
+  double diffuse = 0.75;     // Diffuse light (0-1) - directional shading
+  double specular = 0.25;    // Specular highlights (0-1)
+  double shininess = 24.0;   // Specular shininess (higher = tighter)
+  double brightness = 1.05;  // Overall brightness multiplier
+  
+  double vignette = 0.4;     // Vignette strength (0-1)
+  double contrast = 1.05;    // Contrast (1.0 = normal)
+  double saturation = 1.1;   // Saturation (1.0 = normal)
+  
+  // Shadow parameters
+  bool enableShadows = true;
+  double shadowOffsetX = 0.03;  // Shadow offset X (in game units)
+  double shadowOffsetY = 0.02;  // Shadow offset Y (in game units)
+  double shadowOpacity = 0.3;   // Shadow darkness (0-1)
+  double shadowScale = 1.2;     // Shadow size relative to piece
+
   // Piece positions and states
   List<double> xposPieces = List.filled(32, 0.0);
   List<double> yposPieces = List.filled(32, 0.0);
@@ -126,6 +157,29 @@ class GameRenderer {
 
     // Mesh data (equivalent to MeshData.initData(this) in Java ctor)
     MeshData.initData(this);
+  }
+
+  /// Load shaders (equivalent to onSurfaceCreated shader compilation)
+  Future<void> loadShaders() async {
+    try {
+      // Load post-processing shader (lighting + effects)
+      final postProcessProgram = await ui.FragmentProgram.fromAsset(
+        'shaders/texture_shader.frag',
+      );
+      postProcessShader = postProcessProgram.fragmentShader();
+
+      // Load color shader for solid-color shapes
+      final colorProgram = await ui.FragmentProgram.fromAsset(
+        'shaders/color_shader.frag',
+      );
+      colorShader = colorProgram.fragmentShader();
+      
+      print('Shaders loaded: postProcess=${postProcessShader != null}, color=${colorShader != null}');
+    } catch (e) {
+      print('Error loading shaders: $e');
+      // Don't rethrow - allow game to run without post-processing
+      enablePostProcessing = false;
+    }
   }
 
   /// Load textures (equivalent to onSurfaceCreated texture loading)
@@ -235,6 +289,86 @@ class GameRenderer {
 
   /// Equivalent to Java onDrawFrame()
   void onDrawFrame(Canvas canvas, Size size) {
+    if (enablePostProcessing && postProcessShader != null) {
+      // Render scene to offscreen canvas, then apply post-processing
+      _renderWithPostProcessing(canvas, size);
+    } else {
+      // Direct rendering without post-processing
+      _renderScene(canvas, size);
+    }
+  }
+
+  /// Render scene with post-processing lighting
+  void _renderWithPostProcessing(Canvas canvas, Size size) {
+    // 1. Create offscreen canvas to render the scene
+    final recorder = ui.PictureRecorder();
+    final offscreenCanvas = Canvas(recorder);
+    
+    // 2. Render the entire scene to offscreen canvas
+    _renderScene(offscreenCanvas, size);
+    
+    // 3. Convert to image
+    final picture = recorder.endRecording();
+    
+    // Use a callback-based approach since toImage is async
+    // For now, we'll draw directly and schedule post-processing for next frame
+    // This is a simpler approach that avoids async complexity
+    
+    // Actually, let's use toImageSync if available, otherwise fall back
+    try {
+      final sceneImage = picture.toImageSync(size.width.toInt(), size.height.toInt());
+      
+      // 4. Apply post-processing shader
+      _applyPostProcessing(canvas, size, sceneImage);
+      
+      // Clean up
+      sceneImage.dispose();
+    } catch (e) {
+      // Fallback: render directly without post-processing
+      print('Post-processing failed: $e');
+      _renderScene(canvas, size);
+    }
+  }
+
+  /// Apply post-processing lighting shader
+  void _applyPostProcessing(Canvas canvas, Size size, ui.Image sceneImage) {
+    final shader = postProcessShader!;
+    
+    // Set scene texture (sampler at index 0)
+    shader.setImageSampler(0, sceneImage);
+    
+    // Set resolution (floats start at index 0)
+    shader.setFloat(0, size.width);
+    shader.setFloat(1, size.height);
+    
+    // Normalize light direction
+    final lightLen = math.sqrt(lightDirX * lightDirX + lightDirY * lightDirY + lightDirZ * lightDirZ);
+    shader.setFloat(2, lightDirX / lightLen);
+    shader.setFloat(3, lightDirY / lightLen);
+    shader.setFloat(4, lightDirZ / lightLen);
+    
+    // Set lighting parameters
+    shader.setFloat(5, ambient);
+    shader.setFloat(6, diffuse);
+    shader.setFloat(7, specular);
+    shader.setFloat(8, shininess);
+    
+    // Set effect parameters
+    shader.setFloat(9, vignette);
+    shader.setFloat(10, contrast);
+    shader.setFloat(11, saturation);
+    shader.setFloat(12, brightness);
+    
+    // Draw full-screen quad with shader
+    final paint = Paint()..shader = shader;
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, size.width, size.height),
+      paint,
+    );
+  }
+
+  /// Render the scene (called by both direct and post-processing paths)
+  void _renderScene(Canvas canvas, Size size) {
     // Clear to white like glClearColor(1,1,1,1)
     canvas.drawRect(
       Rect.fromLTWH(0, 0, size.width, size.height),
@@ -250,6 +384,11 @@ class GameRenderer {
     matrix.MatrixUtils.setIdentity(modelMatrix);
     drawCube(canvas, size);
     drawBoardFace(canvas, size);
+
+    // Draw piece shadows first (before pieces)
+    if (enableShadows) {
+      _drawPieceShadows(canvas, size);
+    }
 
     // Pieces
     final sortedPieces = <_PieceSortEntry>[];
@@ -378,6 +517,90 @@ class GameRenderer {
       surfaceTexture,
       texCoords: boardSurfaceTextureCoordinates,
     );
+  }
+
+  // ---------- Shadows ----------
+
+  /// Draw shadows for all pieces on the board
+  void _drawPieceShadows(Canvas canvas, Size size) {
+    // Shadow color with opacity
+    final shadowColor = Color.fromRGBO(0, 0, 0, shadowOpacity);
+    
+    for (int i = 0; i < 20; i++) {
+      if (presents[i] == 0) continue;
+      
+      // Skip pieces that are sinking into holes
+      if (presents[i] != MeshData.HOLE_ANI_LIMIT - 1 && presents[i] < MeshData.HOLE_ANI_LIMIT - 1) {
+        continue;
+      }
+      
+      // Get piece position
+      final pieceX = xposPieces[i];
+      final pieceY = yposPieces[i];
+      
+      // Calculate shadow position (offset based on light direction)
+      // Light from left (-X) casts shadow to the right (+X)
+      // Light from top (-Y) casts shadow downward (+Y in game coords)
+      final shadowX = pieceX + shadowOffsetX;
+      final shadowY = pieceY + shadowOffsetY;
+      
+      // Get the shadow radius based on piece type
+      final isStrikerDisk = (i == 0);
+      final baseRadius = isStrikerDisk 
+          ? MeshData.RADIUS * MeshData.DISK_RADIUS_FACTOR  // Striker is larger
+          : MeshData.RADIUS;
+      final shadowRadius = baseRadius * shadowScale;
+      
+      // Transform shadow center to screen space
+      matrix.MatrixUtils.setIdentity(modelMatrix);
+      matrix.MatrixUtils.translate(
+        modelMatrix,
+        shadowX,
+        MeshData.BOARD_TOP + 0.001, // Just above board surface
+        -shadowY,
+      );
+      
+      // Calculate MVP
+      matrix.MatrixUtils.multiplyMM(mvMatrix, viewMatrix, modelMatrix);
+      matrix.MatrixUtils.multiplyMM(mvpMatrix, projectionMatrix, mvMatrix);
+      
+      // Transform center point
+      final center = matrix.MatrixUtils.transformPoint(mvpMatrix, 0, 0, 0);
+      
+      // Transform a point at the radius to get screen-space size
+      final edge = matrix.MatrixUtils.transformPoint(mvpMatrix, shadowRadius, 0, 0);
+      
+      // Skip if behind camera
+      if (center[2] > 0.9 || center[2] < -2) continue;
+      
+      // Convert to screen coordinates
+      final centerScreen = Offset(
+        (center[0] + 1) * size.width / 2,
+        (1 - center[1]) * size.height / 2,
+      );
+      final edgeScreen = Offset(
+        (edge[0] + 1) * size.width / 2,
+        (1 - edge[1]) * size.height / 2,
+      );
+      
+      // Calculate screen-space radius
+      final screenRadius = (edgeScreen - centerScreen).distance;
+      
+      // Draw shadow as an ellipse (slightly elongated in light direction)
+      final shadowPaint = Paint()
+        ..color = shadowColor
+        ..style = PaintingStyle.fill
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8); // Soft shadow edge
+      
+      // Create elongated ellipse for more realistic shadow
+      final rect = Rect.fromCenter(
+        center: centerScreen,
+        width: screenRadius * 2.2, // Slightly wider
+        height: screenRadius * 1.8, // Slightly shorter (perspective)
+      );
+      
+      canvas.drawOval(rect, shadowPaint);
+    }
   }
 
   // ---------- Cylinders / disks ----------
@@ -992,6 +1215,11 @@ class GameRenderer {
           ..filterQuality = FilterQuality.high;
 
     if (texture != null) {
+      // Use ImageShader for proper texture coordinate interpolation
+      // IMPORTANT: Flutter fragment shaders CANNOT access interpolated texture
+      // coordinates from drawVertices. FlutterFragCoord() gives screen position only.
+      // Therefore, we MUST use ImageShader for proper texture mapping.
+      // ImageShader automatically uses the textureCoordinates from drawVertices.
       paint.shader = ImageShader(
         texture,
         TileMode.repeated,
@@ -999,7 +1227,6 @@ class GameRenderer {
         Matrix4.identity().storage,
       );
     } else {
-      // Fallback color if no texture (shouldn't happen for background)
       paint.color = Colors.grey;
     }
 
@@ -1085,11 +1312,23 @@ class GameRenderer {
       vertexIndex += 3;
     }
 
-    final paint =
-        Paint()
-          ..color = const Color(0xE6333333)
-          ..style = PaintingStyle.fill
-          ..blendMode = BlendMode.plus;
+    final paint = Paint()
+      ..style = PaintingStyle.fill
+      ..blendMode = BlendMode.plus;
+
+    // Use color shader if available
+    if (colorShader != null) {
+      // Set color uniform (RGBA - 4 floats)
+      colorShader!.setFloat(0, 0x33 / 255.0); // R
+      colorShader!.setFloat(1, 0x33 / 255.0); // G
+      colorShader!.setFloat(2, 0x33 / 255.0); // B
+      colorShader!.setFloat(3, 0xE6 / 255.0); // A
+      
+      paint.shader = colorShader;
+    } else {
+      // Fallback to direct color
+      paint.color = const Color(0xE6333333);
+    }
 
     canvas.drawVertices(
       ui.Vertices(ui.VertexMode.triangles, vertices, indices: indices),
