@@ -82,9 +82,9 @@ class GameRenderer {
   // Light from user's left-front → shadows cast to back-right (away from user)
   // Game coords: +X is right, +Y is toward back of board (away from viewer)
   bool enableShadows = true;
-  double shadowOffsetX = 0.025;  // Shadow to the right (reduced by ~1/3)
-  double shadowOffsetY = 0.035;  // Shadow toward back (reduced by ~1/3)
-  double shadowOpacity = 0.25;   // Lighter shadow (was 0.4)
+  double shadowOffsetX = 0.012;  // Shadow to the right (half of previous)
+  double shadowOffsetY = 0.018;  // Shadow toward back (half of previous)
+  double shadowOpacity = 0.25;   // Lighter shadow
   double shadowScale = 1.15;     // Shadow size relative to piece
 
   // Piece positions and states
