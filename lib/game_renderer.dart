@@ -67,26 +67,25 @@ class GameRenderer {
   double lightDirY = 0.7;    // Light from above (Y is up) - makes tops bright
   double lightDirZ = 0.5;    // Light from front (toward viewer)
   
-  // Post-processing parameters (per-face lighting is now done during rendering)
-  double ambient = 0.5;      // Not used for per-face, kept for shader
-  double diffuse = 0.7;      // Not used for per-face, kept for shader
-  double specular = 0.3;     // Not used for per-face, kept for shader
-  double shininess = 20.0;   // Not used for per-face, kept for shader
-  double brightness = 1.0;   // Overall brightness multiplier
+  // Post-processing parameters
+  double ambient = 0.5;      // Ambient factor for shader
+  double diffuse = 0.7;      // Diffuse factor for shader
+  double specular = 0.6;     // Specular/shine intensity (higher = more shiny)
+  double shininess = 32.0;   // Specular tightness
+  double brightness = 1.05;  // Slight brightness boost
   
-  double vignette = 0.3;     // Vignette strength - subtle edge darkening
-  double contrast = 1.05;    // Slight contrast boost
-  double saturation = 1.05;  // Slight saturation boost
+  double vignette = 0.35;    // Vignette strength
+  double contrast = 1.08;    // Contrast boost for punch
+  double saturation = 1.1;   // Slightly more vivid colors
   
   // Shadow parameters
-  // Shadows are cast opposite to light direction
-  // Light from left (-X) → shadow to right (+X)
-  // Light from front (+Z) → shadow to back (-Y in game coords, which is +Z in 3D)
+  // Light from user's left-front → shadows cast to back-right (away from user)
+  // Game coords: +X is right, +Y is toward back of board (away from viewer)
   bool enableShadows = true;
-  double shadowOffsetX = 0.04;  // Shadow offset X - to the right (opposite of light)
-  double shadowOffsetY = -0.03; // Shadow offset Y - to the back (opposite of light)
-  double shadowOpacity = 0.35;  // Shadow darkness (0-1)
-  double shadowScale = 1.15;    // Shadow size relative to piece
+  double shadowOffsetX = 0.025;  // Shadow to the right (reduced by ~1/3)
+  double shadowOffsetY = 0.035;  // Shadow toward back (reduced by ~1/3)
+  double shadowOpacity = 0.25;   // Lighter shadow (was 0.4)
+  double shadowScale = 1.15;     // Shadow size relative to piece
 
   // Piece positions and states
   List<double> xposPieces = List.filled(32, 0.0);
@@ -1202,11 +1201,17 @@ class GameRenderer {
     // -1 = face points directly away from light (darkest)
     final dot = nnx * nlx + nny * nly + nnz * nlz;
     
-    // Map from [-1, 1] to [shadowMin, 1.0]
-    const shadowMin = 0.4; // Minimum brightness in shadow
-    final lighting = shadowMin + (1.0 - shadowMin) * ((dot + 1.0) / 2.0);
+    // Map from [-1, 1] to [shadowMin, maxBright]
+    // Lower shadowMin = darker shadows = more contrast = shinier look
+    const shadowMin = 0.3;  // Darker shadows for more dramatic lighting
+    const maxBright = 1.1;  // Slight overexposure for shine effect
     
-    return lighting.clamp(shadowMin, 1.0);
+    // Non-linear mapping for more realistic falloff
+    final normalizedDot = (dot + 1.0) / 2.0; // Map to [0, 1]
+    final curved = normalizedDot * normalizedDot; // Quadratic for sharper falloff
+    final lighting = shadowMin + (maxBright - shadowMin) * curved;
+    
+    return lighting.clamp(shadowMin, maxBright);
   }
 
   void _collectTriangles(
