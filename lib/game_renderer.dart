@@ -522,8 +522,8 @@ class GameRenderer {
   // ---------- Shadows ----------
 
   /// Draw shadows for all pieces on the board
+  /// Shadows are drawn as flat ellipses ON the board surface in 3D space
   void _drawPieceShadows(Canvas canvas, Size size) {
-    // Shadow color with opacity
     final shadowColor = Color.fromRGBO(0, 0, 0, shadowOpacity);
     
     for (int i = 0; i < 20; i++) {
@@ -539,68 +539,121 @@ class GameRenderer {
       final pieceY = yposPieces[i];
       
       // Calculate shadow position (offset based on light direction)
-      // Light from left (-X) casts shadow to the right (+X)
-      // Light from top (-Y) casts shadow downward (+Y in game coords)
       final shadowX = pieceX + shadowOffsetX;
       final shadowY = pieceY + shadowOffsetY;
       
       // Get the shadow radius based on piece type
       final isStrikerDisk = (i == 0);
       final baseRadius = isStrikerDisk 
-          ? MeshData.RADIUS * MeshData.DISK_RADIUS_FACTOR  // Striker is larger
+          ? MeshData.RADIUS * MeshData.DISK_RADIUS_FACTOR
           : MeshData.RADIUS;
       final shadowRadius = baseRadius * shadowScale;
       
-      // Transform shadow center to screen space
-      matrix.MatrixUtils.setIdentity(modelMatrix);
-      matrix.MatrixUtils.translate(
-        modelMatrix,
-        shadowX,
-        MeshData.BOARD_TOP + 0.001, // Just above board surface
-        -shadowY,
+      // Draw shadow as a flat circle on the board surface
+      _drawFlatShadowOnBoard(canvas, size, shadowX, shadowY, shadowRadius, shadowColor);
+    }
+  }
+
+  /// Draw a flat circular shadow on the board surface
+  /// This creates proper 3D geometry that lies flat on the board
+  void _drawFlatShadowOnBoard(
+    Canvas canvas,
+    Size size,
+    double centerX,
+    double centerY,
+    double radius,
+    Color shadowColor,
+  ) {
+    // Create vertices for a flat circle on the board (Y = BOARD_TOP)
+    // Use triangle fan: center + points around circumference
+    const int segments = 24; // Number of segments for the circle
+    final List<Offset> screenPoints = [];
+    final List<double> zValues = [];
+    
+    // Set up model matrix for shadow position
+    matrix.MatrixUtils.setIdentity(modelMatrix);
+    
+    // Calculate MVP once
+    matrix.MatrixUtils.multiplyMM(mvMatrix, viewMatrix, modelMatrix);
+    matrix.MatrixUtils.multiplyMM(mvpMatrix, projectionMatrix, mvMatrix);
+    
+    // Transform center point (on board surface)
+    final centerPoint = matrix.MatrixUtils.transformPoint(
+      mvpMatrix,
+      centerX,
+      MeshData.BOARD_TOP + 0.001, // Just above board to prevent z-fighting
+      -centerY, // Note: Y in game coords maps to -Z in 3D
+    );
+    
+    // Skip if center is behind camera
+    if (centerPoint[2] > 0.95 || centerPoint[2] < -2) return;
+    
+    // Add center point
+    screenPoints.add(Offset(
+      (centerPoint[0] + 1) * size.width / 2,
+      (1 - centerPoint[1]) * size.height / 2,
+    ));
+    zValues.add(centerPoint[2]);
+    
+    // Add circumference points
+    for (int i = 0; i <= segments; i++) {
+      final angle = (i / segments) * 2 * math.pi;
+      final px = centerX + radius * math.cos(angle);
+      final py = centerY + radius * math.sin(angle);
+      
+      // Transform point on board surface
+      final point = matrix.MatrixUtils.transformPoint(
+        mvpMatrix,
+        px,
+        MeshData.BOARD_TOP + 0.001,
+        -py,
       );
-      
-      // Calculate MVP
-      matrix.MatrixUtils.multiplyMM(mvMatrix, viewMatrix, modelMatrix);
-      matrix.MatrixUtils.multiplyMM(mvpMatrix, projectionMatrix, mvMatrix);
-      
-      // Transform center point
-      final center = matrix.MatrixUtils.transformPoint(mvpMatrix, 0, 0, 0);
-      
-      // Transform a point at the radius to get screen-space size
-      final edge = matrix.MatrixUtils.transformPoint(mvpMatrix, shadowRadius, 0, 0);
       
       // Skip if behind camera
-      if (center[2] > 0.9 || center[2] < -2) continue;
+      if (point[2] > 0.95 || point[2] < -2) continue;
       
-      // Convert to screen coordinates
-      final centerScreen = Offset(
-        (center[0] + 1) * size.width / 2,
-        (1 - center[1]) * size.height / 2,
-      );
-      final edgeScreen = Offset(
-        (edge[0] + 1) * size.width / 2,
-        (1 - edge[1]) * size.height / 2,
-      );
-      
-      // Calculate screen-space radius
-      final screenRadius = (edgeScreen - centerScreen).distance;
-      
-      // Draw shadow as an ellipse (slightly elongated in light direction)
-      final shadowPaint = Paint()
-        ..color = shadowColor
-        ..style = PaintingStyle.fill
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8); // Soft shadow edge
-      
-      // Create elongated ellipse for more realistic shadow
-      final rect = Rect.fromCenter(
-        center: centerScreen,
-        width: screenRadius * 2.2, // Slightly wider
-        height: screenRadius * 1.8, // Slightly shorter (perspective)
-      );
-      
-      canvas.drawOval(rect, shadowPaint);
+      screenPoints.add(Offset(
+        (point[0] + 1) * size.width / 2,
+        (1 - point[1]) * size.height / 2,
+      ));
+      zValues.add(point[2]);
     }
+    
+    // Need at least 3 points to draw
+    if (screenPoints.length < 3) return;
+    
+    // Create triangle fan indices (center -> each pair of adjacent points)
+    final List<Offset> vertices = [];
+    final List<int> indices = [];
+    
+    for (int i = 0; i < screenPoints.length; i++) {
+      vertices.add(screenPoints[i]);
+    }
+    
+    // Triangle fan: center (0) connects to each pair
+    for (int i = 1; i < vertices.length - 1; i++) {
+      indices.add(0);      // Center
+      indices.add(i);      // Current point
+      indices.add(i + 1);  // Next point
+    }
+    
+    if (indices.isEmpty) return;
+    
+    // Draw with blur for soft shadow edges
+    final shadowPaint = Paint()
+      ..color = shadowColor
+      ..style = PaintingStyle.fill
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+    
+    canvas.drawVertices(
+      ui.Vertices(
+        ui.VertexMode.triangles,
+        vertices,
+        indices: indices,
+      ),
+      BlendMode.srcOver,
+      shadowPaint,
+    );
   }
 
   // ---------- Cylinders / disks ----------
