@@ -14,7 +14,7 @@ class GameScreen extends StatefulWidget {
   State<GameScreen> createState() => _GameScreenState();
 }
 
-class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateMixin {
+class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   // Core game components
   late GameRenderer gameRenderer;
   GameEngine? engine;
@@ -42,6 +42,9 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
   void initState() {
     super.initState();
     
+    // Register for app lifecycle events
+    WidgetsBinding.instance.addObserver(this);
+    
     // Initialize renderer
     gameRenderer = GameRenderer();
     
@@ -60,9 +63,36 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     animationController.dispose();
     _cleanupGame();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.hidden:
+        // Prepare for potential GPU context loss
+        gameRenderer.resetPostProcessing();
+        print('App going to background - post-processing prepared for reset');
+        break;
+      case AppLifecycleState.resumed:
+        // Reset post-processing state on app resume to avoid GPU context issues
+        gameRenderer.resetPostProcessing();
+        print('App resumed - post-processing state reset');
+        // Force a rebuild to ensure clean render
+        if (mounted) {
+          setState(() {});
+        }
+        break;
+      case AppLifecycleState.detached:
+        break;
+    }
   }
 
   void _cleanupGame() {

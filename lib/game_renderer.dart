@@ -60,29 +60,33 @@ class GameRenderer {
   // Post-processing / lighting parameters
   bool enablePostProcessing = true;
   
-  // Directional light from left-top at an angle
-  // Light direction vector (pointing TO light source, normalized)
-  // (-0.6, -0.4, 0.7) means light comes from left (-X), top (-Y), and above (+Z)
-  double lightDirX = -0.6;   // Light from left side
-  double lightDirY = -0.4;   // Light from top
-  double lightDirZ = 0.7;    // Light from above
+  // Directional light - vector pointing FROM surface TO light source
+  // Light comes from viewer's direction (front-left-above)
+  // Coordinate system: Y is UP, Z is toward viewer (front)
+  double lightDirX = -0.5;   // Light slightly from left
+  double lightDirY = 0.7;    // Light from above (Y is up) - makes tops bright
+  double lightDirZ = 0.5;    // Light from front (toward viewer)
   
-  double ambient = 0.35;     // Ambient light (0-1) - base illumination
-  double diffuse = 0.75;     // Diffuse light (0-1) - directional shading
-  double specular = 0.25;    // Specular highlights (0-1)
-  double shininess = 24.0;   // Specular shininess (higher = tighter)
-  double brightness = 1.05;  // Overall brightness multiplier
+  // Post-processing parameters (per-face lighting is now done during rendering)
+  double ambient = 0.5;      // Not used for per-face, kept for shader
+  double diffuse = 0.7;      // Not used for per-face, kept for shader
+  double specular = 0.3;     // Not used for per-face, kept for shader
+  double shininess = 20.0;   // Not used for per-face, kept for shader
+  double brightness = 1.0;   // Overall brightness multiplier
   
-  double vignette = 0.4;     // Vignette strength (0-1)
-  double contrast = 1.05;    // Contrast (1.0 = normal)
-  double saturation = 1.1;   // Saturation (1.0 = normal)
+  double vignette = 0.3;     // Vignette strength - subtle edge darkening
+  double contrast = 1.05;    // Slight contrast boost
+  double saturation = 1.05;  // Slight saturation boost
   
   // Shadow parameters
+  // Shadows are cast opposite to light direction
+  // Light from left (-X) → shadow to right (+X)
+  // Light from front (+Z) → shadow to back (-Y in game coords, which is +Z in 3D)
   bool enableShadows = true;
-  double shadowOffsetX = 0.03;  // Shadow offset X (in game units)
-  double shadowOffsetY = 0.02;  // Shadow offset Y (in game units)
-  double shadowOpacity = 0.3;   // Shadow darkness (0-1)
-  double shadowScale = 1.2;     // Shadow size relative to piece
+  double shadowOffsetX = 0.04;  // Shadow offset X - to the right (opposite of light)
+  double shadowOffsetY = -0.03; // Shadow offset Y - to the back (opposite of light)
+  double shadowOpacity = 0.35;  // Shadow darkness (0-1)
+  double shadowScale = 1.15;    // Shadow size relative to piece
 
   // Piece positions and states
   List<double> xposPieces = List.filled(32, 0.0);
@@ -289,45 +293,83 @@ class GameRenderer {
 
   /// Equivalent to Java onDrawFrame()
   void onDrawFrame(Canvas canvas, Size size) {
-    if (enablePostProcessing && postProcessShader != null) {
+    // Check if post-processing is enabled and safe to use
+    final canUsePostProcessing = enablePostProcessing && 
+                                  postProcessShader != null &&
+                                  _skipPostProcessFrames <= 0 &&
+                                  _postProcessFailCount < _maxPostProcessFails;
+    
+    if (canUsePostProcessing) {
       // Render scene to offscreen canvas, then apply post-processing
       _renderWithPostProcessing(canvas, size);
     } else {
       // Direct rendering without post-processing
+      // Still decrement skip counter if needed
+      if (_skipPostProcessFrames > 0) {
+        _skipPostProcessFrames--;
+      }
       _renderScene(canvas, size);
     }
   }
 
+  // Track post-processing state
+  int _postProcessFailCount = 0;
+  static const int _maxPostProcessFails = 3;
+  
+  // Skip frames after resume to let GPU context stabilize
+  int _skipPostProcessFrames = 0;
+  static const int _framesToSkipAfterResume = 30; // ~0.5 seconds at 60fps
+
   /// Render scene with post-processing lighting
   void _renderWithPostProcessing(Canvas canvas, Size size) {
-    // 1. Create offscreen canvas to render the scene
-    final recorder = ui.PictureRecorder();
-    final offscreenCanvas = Canvas(recorder);
+    // Note: Safety checks are now done in onDrawFrame before calling this method
     
-    // 2. Render the entire scene to offscreen canvas
-    _renderScene(offscreenCanvas, size);
+    // Validate size
+    final width = size.width.toInt();
+    final height = size.height.toInt();
+    if (width <= 0 || height <= 0 || width > 4096 || height > 4096) {
+      _renderScene(canvas, size);
+      return;
+    }
+
+    ui.Image? sceneImage;
     
-    // 3. Convert to image
-    final picture = recorder.endRecording();
-    
-    // Use a callback-based approach since toImage is async
-    // For now, we'll draw directly and schedule post-processing for next frame
-    // This is a simpler approach that avoids async complexity
-    
-    // Actually, let's use toImageSync if available, otherwise fall back
     try {
-      final sceneImage = picture.toImageSync(size.width.toInt(), size.height.toInt());
+      // 1. Create offscreen canvas to render the scene
+      final recorder = ui.PictureRecorder();
+      final offscreenCanvas = Canvas(recorder);
+      
+      // 2. Render the entire scene to offscreen canvas
+      _renderScene(offscreenCanvas, size);
+      
+      // 3. Convert to image
+      final picture = recorder.endRecording();
+      sceneImage = picture.toImageSync(width, height);
       
       // 4. Apply post-processing shader
       _applyPostProcessing(canvas, size, sceneImage);
       
-      // Clean up
-      sceneImage.dispose();
+      // Success - reset failure count
+      _postProcessFailCount = 0;
     } catch (e) {
+      // Increment failure count
+      _postProcessFailCount++;
+      print('Post-processing failed (attempt $_postProcessFailCount): $e');
+      
       // Fallback: render directly without post-processing
-      print('Post-processing failed: $e');
       _renderScene(canvas, size);
+    } finally {
+      // Clean up resources
+      sceneImage?.dispose();
     }
+  }
+
+  /// Reset post-processing state (call on app resume)
+  void resetPostProcessing() {
+    _postProcessFailCount = 0;
+    // Skip post-processing for several frames to let GPU stabilize
+    _skipPostProcessFrames = _framesToSkipAfterResume;
+    print('Post-processing paused for $_framesToSkipAfterResume frames');
   }
 
   /// Apply post-processing lighting shader
@@ -504,6 +546,7 @@ class GameRenderer {
       6 * 13,
       frameTexture,
       texCoords: cubeTextureCoordinates,
+      applyLighting: true, // Apply lighting to board frame
     );
   }
 
@@ -516,6 +559,7 @@ class GameRenderer {
       boardSurfacePositions.length ~/ 3,
       surfaceTexture,
       texCoords: boardSurfaceTextureCoordinates,
+      applyLighting: true, // Apply lighting to board surface
     );
   }
 
@@ -699,7 +743,7 @@ class GameRenderer {
       topTexture = blackTexture;
     }
 
-    // Border
+    // Border (sides) - apply lighting based on face normals
     _drawMesh(
       canvas,
       size,
@@ -708,9 +752,10 @@ class GameRenderer {
       6 * MeshData.CIRC_SEGMENTS,
       borderTexture,
       texCoords: cylinderTextureCoordinates,
+      applyLighting: true, // Enable per-face lighting for piece sides
     );
 
-    // Top
+    // Top - apply lighting (mostly uniform since top faces up)
     _drawMesh(
       canvas,
       size,
@@ -719,6 +764,7 @@ class GameRenderer {
       3 * MeshData.CIRC_SEGMENTS,
       topTexture,
       texCoords: cylinderTextureCoordinates,
+      applyLighting: true, // Enable per-face lighting for piece top
     );
   }
 
@@ -1066,6 +1112,7 @@ class GameRenderer {
     int vertexCount,
     ui.Image? texture, {
     Float32List? texCoords,
+    bool applyLighting = false,
   }) {
     if (texture == null) return;
 
@@ -1083,6 +1130,7 @@ class GameRenderer {
       texture,
       mvpMatrix,
       texCoords: texCoords,
+      applyLighting: applyLighting,
     );
   }
 
@@ -1106,6 +1154,61 @@ class GameRenderer {
     );
   }
 
+  /// Calculate lighting factor for a triangle face based on its normal
+  /// Returns value between shadowMin (shadow) and 1.0 (fully lit)
+  double _calculateFaceLighting(
+    double x1, double y1, double z1,
+    double x2, double y2, double z2,
+    double x3, double y3, double z3,
+  ) {
+    // Calculate two edge vectors
+    final e1x = x2 - x1;
+    final e1y = y2 - y1;
+    final e1z = z2 - z1;
+    
+    final e2x = x3 - x1;
+    final e2y = y3 - y1;
+    final e2z = z3 - z1;
+    
+    // Cross product to get face normal
+    final nx = e1y * e2z - e1z * e2y;
+    final ny = e1z * e2x - e1x * e2z;
+    final nz = e1x * e2y - e1y * e2x;
+    
+    // Normalize the normal
+    final len = math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (len < 0.0001) return 0.7; // Degenerate triangle
+    
+    final nnx = nx / len;
+    final nny = ny / len;
+    final nnz = nz / len;
+    
+    // Light direction vector pointing FROM surface TO light source
+    // lightDirX/Y/Z define where the light is:
+    //   lightDirX = -0.7 means light is to the LEFT
+    //   lightDirY = 0.5 means light is ABOVE (Y is up)
+    //   lightDirZ = 0.5 means light is in FRONT (positive Z toward viewer)
+    // DO NOT flip - lightDir already points toward light
+    final lx = lightDirX;
+    final ly = lightDirY;
+    final lz = lightDirZ;
+    final llen = math.sqrt(lx * lx + ly * ly + lz * lz);
+    final nlx = lx / llen;
+    final nly = ly / llen;
+    final nlz = lz / llen;
+    
+    // Dot product: how much face normal aligns with light direction
+    // +1 = face points directly toward light (brightest)
+    // -1 = face points directly away from light (darkest)
+    final dot = nnx * nlx + nny * nly + nnz * nlz;
+    
+    // Map from [-1, 1] to [shadowMin, 1.0]
+    const shadowMin = 0.4; // Minimum brightness in shadow
+    final lighting = shadowMin + (1.0 - shadowMin) * ((dot + 1.0) / 2.0);
+    
+    return lighting.clamp(shadowMin, 1.0);
+  }
+
   void _collectTriangles(
     List<_RenderTriangle> triangles,
     Float32List positions,
@@ -1115,29 +1218,26 @@ class GameRenderer {
     Float32List mvp,
     Size size, {
     Float32List? texCoords,
+    bool applyLighting = false,
   }) {
     for (int i = 0; i < vertexCount; i += 3) {
       final idx = (offset + i) * 3;
       if (idx + 8 >= positions.length) break;
 
-      final v1 = matrix.MatrixUtils.transformPoint(
-        mvp,
-        positions[idx],
-        positions[idx + 1],
-        positions[idx + 2],
-      );
-      final v2 = matrix.MatrixUtils.transformPoint(
-        mvp,
-        positions[idx + 3],
-        positions[idx + 4],
-        positions[idx + 5],
-      );
-      final v3 = matrix.MatrixUtils.transformPoint(
-        mvp,
-        positions[idx + 6],
-        positions[idx + 7],
-        positions[idx + 8],
-      );
+      // Get original (untransformed) positions for normal calculation
+      final ox1 = positions[idx];
+      final oy1 = positions[idx + 1];
+      final oz1 = positions[idx + 2];
+      final ox2 = positions[idx + 3];
+      final oy2 = positions[idx + 4];
+      final oz2 = positions[idx + 5];
+      final ox3 = positions[idx + 6];
+      final oy3 = positions[idx + 7];
+      final oz3 = positions[idx + 8];
+
+      final v1 = matrix.MatrixUtils.transformPoint(mvp, ox1, oy1, oz1);
+      final v2 = matrix.MatrixUtils.transformPoint(mvp, ox2, oy2, oz2);
+      final v3 = matrix.MatrixUtils.transformPoint(mvp, ox3, oy3, oz3);
 
       // basic z clipping
       if (v1[2] < -2 ||
@@ -1158,6 +1258,15 @@ class GameRenderer {
       final p1 = _toScreen(v1, size);
       final p2 = _toScreen(v2, size);
       final p3 = _toScreen(v3, size);
+      
+      // Calculate per-face lighting if enabled
+      double lightingFactor = 1.0;
+      if (applyLighting) {
+        // Transform positions by model matrix only (not view/projection) for correct world-space normals
+        // Actually, we need to use the original positions relative to the model
+        // The model matrix rotation affects the normals
+        lightingFactor = _calculateFaceLighting(ox1, oy1, oz1, ox2, oy2, oz2, ox3, oy3, oz3);
+      }
 
       final List<Offset>? uvs;
       if (texture != null) {
@@ -1182,7 +1291,7 @@ class GameRenderer {
         uvs = null;
       }
 
-      triangles.add(_RenderTriangle(zDepth, [p1, p2, p3], uvs, texture));
+      triangles.add(_RenderTriangle(zDepth, [p1, p2, p3], uvs, texture, lightingFactor));
     }
   }
 
@@ -1195,6 +1304,7 @@ class GameRenderer {
     ui.Image texture,
     Float32List mvp, {
     Float32List? texCoords,
+    bool applyLighting = false,
   }) {
     // 1. Transform all vertices and collect valid triangles
     final List<_RenderTriangle> triangles = [];
@@ -1207,6 +1317,7 @@ class GameRenderer {
       mvp,
       size,
       texCoords: texCoords,
+      applyLighting: applyLighting,
     );
 
     if (triangles.isEmpty) return;
@@ -1249,6 +1360,7 @@ class GameRenderer {
   ) {
     final List<Offset> vertices = [];
     final List<Offset> textureCoordinates = [];
+    final List<Color> vertexColors = [];
     final List<int> indices = [];
 
     int vertexIndex = 0;
@@ -1258,6 +1370,16 @@ class GameRenderer {
       if (tri.texCoords != null) {
         textureCoordinates.addAll(tri.texCoords!);
       }
+      
+      // Create vertex colors based on lighting factor
+      // Lighting factor: 0.35 (shadow) to 1.0 (fully lit)
+      final brightness = (tri.lightingFactor * 255).round().clamp(0, 255);
+      final lightColor = Color.fromARGB(255, brightness, brightness, brightness);
+      // All 3 vertices of this triangle get the same lighting color
+      vertexColors.add(lightColor);
+      vertexColors.add(lightColor);
+      vertexColors.add(lightColor);
+      
       indices.addAll([vertexIndex, vertexIndex + 1, vertexIndex + 2]);
       vertexIndex += 3;
     }
@@ -1268,11 +1390,6 @@ class GameRenderer {
           ..filterQuality = FilterQuality.high;
 
     if (texture != null) {
-      // Use ImageShader for proper texture coordinate interpolation
-      // IMPORTANT: Flutter fragment shaders CANNOT access interpolated texture
-      // coordinates from drawVertices. FlutterFragCoord() gives screen position only.
-      // Therefore, we MUST use ImageShader for proper texture mapping.
-      // ImageShader automatically uses the textureCoordinates from drawVertices.
       paint.shader = ImageShader(
         texture,
         TileMode.repeated,
@@ -1283,15 +1400,17 @@ class GameRenderer {
       paint.color = Colors.grey;
     }
 
+    // Use BlendMode.modulate to multiply texture color with vertex color (lighting)
     canvas.drawVertices(
       ui.Vertices(
         ui.VertexMode.triangles,
         vertices,
         textureCoordinates:
             textureCoordinates.isNotEmpty ? textureCoordinates : null,
+        colors: vertexColors,
         indices: indices,
       ),
-      BlendMode.srcOver,
+      BlendMode.modulate, // Multiplies texture with vertex colors for lighting
       paint,
     );
   }
@@ -1402,8 +1521,9 @@ class _RenderTriangle {
   final List<Offset> points;
   final List<Offset>? texCoords;
   final ui.Image? texture;
+  final double lightingFactor; // 0.0 = dark (shadow), 1.0 = bright (lit)
 
-  _RenderTriangle(this.z, this.points, this.texCoords, this.texture);
+  _RenderTriangle(this.z, this.points, this.texCoords, this.texture, [this.lightingFactor = 1.0]);
 }
 
 class _PieceSortEntry {

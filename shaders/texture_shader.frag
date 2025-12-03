@@ -5,8 +5,10 @@
 // POST-PROCESSING DIRECTIONAL LIGHTING SHADER
 // ==============================================================================
 // 
-// Applies directional lighting from a specific angle (like sunlight).
-// Light comes from the left-top at an angle towards the board.
+// Creates strong directional lighting where:
+// - Light-facing areas are bright
+// - Shadow-facing areas are dark
+// - Creates realistic light/shadow transition across objects
 //
 // ==============================================================================
 
@@ -33,6 +35,12 @@ float luminance(vec3 color) {
     return dot(color, vec3(0.299, 0.587, 0.114));
 }
 
+// Smooth step for gradient transitions
+float smoothGradient(float edge0, float edge1, float x) {
+    float t = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
 void main() {
     vec2 uv = FlutterFragCoord().xy / uResolution;
     vec4 sceneColor = texture(uScene, uv);
@@ -43,49 +51,34 @@ void main() {
         return;
     }
     
-    // ========== DIRECTIONAL LIGHTING ==========
+    // ========== SUBTLE DIRECTIONAL LIGHTING ==========
+    // Note: Strong per-object lighting is applied during rendering.
+    // This post-process adds subtle ambient gradient.
     
-    // Normalize light direction (should already be normalized, but just in case)
     vec3 lightDir = normalize(uLightDir);
     
-    // Create a pseudo-normal that varies across the screen
-    // This simulates a surface that faces slightly different directions
-    // creating the illusion of 3D depth
-    vec3 normal = normalize(vec3(
-        (uv.x - 0.5) * 0.3,  // Slight X tilt based on position
-        (uv.y - 0.5) * 0.3,  // Slight Y tilt based on position
-        1.0                   // Mostly facing camera
-    ));
+    // Subtle gradient: left side slightly brighter (light source side)
+    // Keep this subtle since per-object lighting handles the main effect
+    float xGradient = 1.0 - uv.x * 0.15; // Very subtle: 1.0 on left, 0.85 on right
+    float yGradient = 1.0 - uv.y * 0.1;  // Very subtle top-to-bottom
     
-    // Ambient component (constant base illumination)
-    vec3 ambient = uAmbient * sceneColor.rgb;
+    // Light factor for ambient variation (subtle)
+    float lightFactor = xGradient * yGradient;
     
-    // Diffuse component (directional, no falloff for distant light)
-    float diff = max(dot(normal, lightDir), 0.0);
-    // Add a gradient based on screen position to enhance directional feel
-    // Light coming from left means left side is brighter
-    float directionalGradient = 0.7 + 0.3 * (1.0 - uv.x); // Brighter on left
-    diff *= directionalGradient;
-    vec3 diffuse = uDiffuse * diff * sceneColor.rgb;
+    // ========== SIMPLE LIGHTING ==========
+    // Per-object lighting is done during rendering.
+    // This shader just adds subtle ambient variation and effects.
     
-    // Specular component (Blinn-Phong)
-    vec3 viewDir = vec3(0.0, 0.0, 1.0); // Camera looking at screen
-    vec3 halfDir = normalize(lightDir + viewDir);
-    float spec = pow(max(dot(normal, halfDir), 0.0), uShininess);
-    // Specular also affected by position (highlights on left side)
-    spec *= directionalGradient;
-    vec3 specular = uSpecular * spec * vec3(1.0, 0.98, 0.95); // Slightly warm specular
-    
-    // Combine lighting
-    vec3 litColor = ambient + diffuse + specular;
+    // Apply subtle lighting factor to scene
+    vec3 litColor = sceneColor.rgb * lightFactor;
     
     // Apply brightness
     litColor *= uBrightness;
     
     // ========== POST-PROCESSING EFFECTS ==========
     
-    // Vignette (darken edges, slightly offset towards right to enhance directional feel)
-    vec2 vignetteCoord = uv - vec2(0.4, 0.5); // Offset vignette center slightly left
+    // Vignette (offset towards right/shadow side)
+    vec2 vignetteCoord = uv - vec2(0.35, 0.5);
     float vignetteFactor = 1.0 - dot(vignetteCoord, vignetteCoord) * uVignette;
     vignetteFactor = clamp(vignetteFactor, 0.0, 1.0);
     litColor *= vignetteFactor;
