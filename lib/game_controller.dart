@@ -1074,7 +1074,138 @@ class GameController {
     int lastDiskChanged,
     bool diskJustMoved,
   ) async {
-    // Implementation continues...
+    // When the disk is moving for positioning (not shooting mode)
+    if (engine.diskMoving && !engine.automatic) {
+      int currentTime = DateTime.now().millisecondsSinceEpoch;
+      bool diskXChanged = false;
+      double xpos = renderer.xposPieces[0];
+      double ypos = renderer.yposPieces[0];
+      
+      if (engine.playerCount == 2) {
+        // Move disk horizontally
+        if (diskCurrentX - diskStartX > 0.01 / diskMoveMultiplier &&
+            xpos < MeshData.DISK_YBORDER) {
+          if (diskMoveMultiplier >= 8) {
+            xpos += 1.8 * (diskCurrentX - diskStartX);
+          } else {
+            xpos += 0.001 * diskMoveMultiplier;
+          }
+          if (xpos > MeshData.DISK_YBORDER) {
+            xpos = MeshData.DISK_YBORDER;
+          }
+          diskXChanged = true;
+        } else if (diskCurrentX - diskStartX < -0.01 / diskMoveMultiplier &&
+            xpos > -MeshData.DISK_YBORDER) {
+          if (diskMoveMultiplier >= 8) {
+            xpos += 1.8 * (diskCurrentX - diskStartX);
+          } else {
+            xpos -= 0.001 * diskMoveMultiplier;
+          }
+          if (xpos < -MeshData.DISK_YBORDER) {
+            xpos = -MeshData.DISK_YBORDER;
+          }
+          diskXChanged = true;
+        }
+      }
+      
+      if (diskXChanged) {
+        engine.diskStartX = diskCurrentX;
+        if (diskMoveMultiplier < 8) {
+          diskMoveMultiplier += 2;
+        }
+        lastDiskChanged = currentTime;
+      }
+      
+      bool diskYChanged = false;
+      if (engine.playerCount == 2) {
+        if (engine.currentPlayer == 0) {
+          // Player 0: disk on bottom side
+          if (diskCurrentY - diskStartY > 0.01 &&
+              ypos < -MeshData.DISK_START_DIST + MeshData.DISK_START_UP_DIFF) {
+            ypos += 0.001;
+            diskYChanged = true;
+          } else if (diskCurrentY - diskStartY < -0.01 &&
+              ypos > -MeshData.DISK_START_DIST - MeshData.DISK_START_DOWN_DIFF) {
+            ypos -= 0.001;
+            diskYChanged = true;
+          }
+        } else {
+          // Player 1: disk on top side
+          if (diskCurrentY - diskStartY < -0.01 &&
+              ypos > MeshData.DISK_START_DIST - MeshData.DISK_START_UP_DIFF) {
+            ypos -= 0.001;
+            diskYChanged = true;
+          } else if (diskCurrentY - diskStartY > 0.01 &&
+              ypos < MeshData.DISK_START_DIST + MeshData.DISK_START_DOWN_DIFF) {
+            ypos += 0.001;
+            diskYChanged = true;
+          }
+        }
+      }
+      
+      if (diskYChanged) {
+        engine.diskStartY = diskCurrentY;
+        if (diskMoveMultiplier > 1) {
+          diskMoveMultiplier ~/= 2;
+        }
+        lastDiskChanged = currentTime;
+      }
+      
+      // Actually move the disk position based on changes
+      if (diskXChanged || diskYChanged) {
+        double radius = MeshData.RADIUS * (1 + MeshData.DISK_RADIUS_FACTOR);
+        radius *= radius;
+        
+        bool conflict = false;
+        for (int i = 1; i < 20; i++) {
+          if (renderer.presents[i] != MeshData.HOLE_ANI_LIMIT) {
+            continue;
+          }
+          if (distsq(xpos, ypos, renderer.xposPieces[i], renderer.yposPieces[i]) < radius) {
+            conflict = true;
+            break;
+          }
+        }
+        
+        if (conflict) {
+          renderer.zRaised[0] = true;
+        } else {
+          renderer.zRaised[0] = false;
+          engine.lastLandedDiskX = xpos;
+          engine.lastLandedDiskY = ypos;
+        }
+        
+        renderer.xposPieces[0] = xpos;
+        renderer.yposPieces[0] = ypos;
+        
+        nt_diskMoved = true;
+      }
+      
+      if (lastDiskChanged - currentTime > 500) {
+        diskMoveMultiplier = 1;
+      }
+      diskJustMoved = true;
+    } else {
+      diskMoveMultiplier = 1;
+    }
+    
+    // When disk dragging just ended
+    if (!engine.diskMoving && diskJustMoved) {
+      diskJustMoved = false;
+      renderer.zRaised[0] = false;
+      
+      currentDiskxpos = renderer.xposPieces[0];
+      currentDiskypos = renderer.yposPieces[0];
+      
+      findPlaceToDisk();
+      
+      engine.lastLandedDiskX = currentDiskxpos;
+      engine.lastLandedDiskY = currentDiskypos;
+      renderer.xposPieces[0] = engine.lastLandedDiskX;
+      renderer.yposPieces[0] = engine.lastLandedDiskY;
+      nt_diskMoved = true;
+    }
+    
     return {
       'multiplier': diskMoveMultiplier,
       'lastChanged': lastDiskChanged,
