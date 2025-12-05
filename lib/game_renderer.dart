@@ -177,10 +177,8 @@ class GameRenderer {
       );
       colorShader = colorProgram.fragmentShader();
       
-      print('Shaders loaded: postProcess=${postProcessShader != null}, color=${colorShader != null}');
     } catch (e) {
-      print('Error loading shaders: $e');
-      // Don't rethrow - allow game to run without post-processing
+      debugPrint('Error loading shaders: $e');
       enablePostProcessing = false;
     }
   }
@@ -292,38 +290,54 @@ class GameRenderer {
 
   /// Equivalent to Java onDrawFrame()
   void onDrawFrame(Canvas canvas, Size size) {
+    // FIRST: Check if post-processing is temporarily disabled (background/resume)
+    if (_postProcessTemporarilyDisabled) {
+      _renderScene(canvas, size);
+      return;
+    }
+    
+    // SECOND: Check if we're in cooldown period after resume
+    if (DateTime.now().isBefore(_postProcessSafeAfter)) {
+      _renderScene(canvas, size);
+      _successfulFrameCount++;
+      return;
+    }
+    
+    // THIRD: Check if we need more warmup frames
+    if (_successfulFrameCount < 5) {
+      _renderScene(canvas, size);
+      _successfulFrameCount++;
+      return;
+    }
+    
     // Check if post-processing is enabled and safe to use
     final canUsePostProcessing = enablePostProcessing && 
                                   postProcessShader != null &&
-                                  _skipPostProcessFrames <= 0 &&
                                   _postProcessFailCount < _maxPostProcessFails;
     
     if (canUsePostProcessing) {
-      // Render scene to offscreen canvas, then apply post-processing
       _renderWithPostProcessing(canvas, size);
     } else {
-      // Direct rendering without post-processing
-      // Still decrement skip counter if needed
-      if (_skipPostProcessFrames > 0) {
-        _skipPostProcessFrames--;
-      }
       _renderScene(canvas, size);
     }
   }
 
   // Track post-processing state
   int _postProcessFailCount = 0;
-  static const int _maxPostProcessFails = 3;
+  static const int _maxPostProcessFails = 2;
   
-  // Skip frames after resume to let GPU context stabilize
-  int _skipPostProcessFrames = 0;
-  static const int _framesToSkipAfterResume = 30; // ~0.5 seconds at 60fps
+  // Time-based safety: skip post-processing until this timestamp
+  DateTime _postProcessSafeAfter = DateTime.now();
+  static const Duration _postProcessCooldown = Duration(milliseconds: 2500);
+  
+  // Flag to completely disable post-processing temporarily
+  bool _postProcessTemporarilyDisabled = false;
+  
+  // Track successful frames for warmup
+  int _successfulFrameCount = 0;
 
   /// Render scene with post-processing lighting
   void _renderWithPostProcessing(Canvas canvas, Size size) {
-    // Note: Safety checks are now done in onDrawFrame before calling this method
-    
-    // Validate size
     final width = size.width.toInt();
     final height = size.height.toInt();
     if (width <= 0 || height <= 0 || width > 4096 || height > 4096) {
@@ -334,31 +348,19 @@ class GameRenderer {
     ui.Image? sceneImage;
     
     try {
-      // 1. Create offscreen canvas to render the scene
       final recorder = ui.PictureRecorder();
       final offscreenCanvas = Canvas(recorder);
-      
-      // 2. Render the entire scene to offscreen canvas
       _renderScene(offscreenCanvas, size);
-      
-      // 3. Convert to image
       final picture = recorder.endRecording();
       sceneImage = picture.toImageSync(width, height);
-      
-      // 4. Apply post-processing shader
       _applyPostProcessing(canvas, size, sceneImage);
-      
-      // Success - reset failure count
       _postProcessFailCount = 0;
     } catch (e) {
-      // Increment failure count
       _postProcessFailCount++;
-      print('Post-processing failed (attempt $_postProcessFailCount): $e');
-      
-      // Fallback: render directly without post-processing
+      _postProcessSafeAfter = DateTime.now().add(const Duration(milliseconds: 1000));
+      _successfulFrameCount = 0;
       _renderScene(canvas, size);
     } finally {
-      // Clean up resources
       sceneImage?.dispose();
     }
   }
@@ -366,9 +368,15 @@ class GameRenderer {
   /// Reset post-processing state (call on app resume)
   void resetPostProcessing() {
     _postProcessFailCount = 0;
-    // Skip post-processing for several frames to let GPU stabilize
-    _skipPostProcessFrames = _framesToSkipAfterResume;
-    print('Post-processing paused for $_framesToSkipAfterResume frames');
+    _successfulFrameCount = 0;
+    _postProcessSafeAfter = DateTime.now().add(_postProcessCooldown);
+    _postProcessTemporarilyDisabled = false;
+  }
+  
+  /// Prepare for app going to background
+  void prepareForBackground() {
+    _postProcessTemporarilyDisabled = true;
+    _successfulFrameCount = 0;
   }
 
   /// Apply post-processing lighting shader
@@ -531,7 +539,7 @@ class GameRenderer {
       drawArcs(canvas, size);
     }
 
-    // Java then restores cull/depth/blend, which isn’t needed for Canvas.
+    // Java then restores cull/depth/blend, which isn't needed for Canvas.
   }
 
   // ---------- Board ----------

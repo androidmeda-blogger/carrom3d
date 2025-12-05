@@ -77,17 +77,22 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       case AppLifecycleState.paused:
       case AppLifecycleState.inactive:
       case AppLifecycleState.hidden:
-        // Prepare for potential GPU context loss
-        gameRenderer.resetPostProcessing();
-        print('App going to background - post-processing prepared for reset');
+        _resetTouchState();
+        gameRenderer.prepareForBackground();
         break;
       case AppLifecycleState.resumed:
-        // Reset post-processing state on app resume to avoid GPU context issues
+        _resetTouchState();
         gameRenderer.resetPostProcessing();
-        print('App resumed - post-processing state reset');
-        // Force a rebuild to ensure clean render
         if (mounted) {
           setState(() {});
+          for (int i = 1; i <= 5; i++) {
+            Future.delayed(Duration(milliseconds: 100 * i), () {
+              if (mounted) setState(() {});
+            });
+          }
+          Future.delayed(const Duration(milliseconds: 3000), () {
+            if (mounted) setState(() {});
+          });
         }
         break;
       case AppLifecycleState.detached:
@@ -102,50 +107,46 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
     dbAdapter?.close();
     scoreDbAdapter?.close();
   }
+  
+  /// Reset touch state when app resumes - pointers may have been lost
+  void _resetTouchState() {
+    _pointerCount = 0;
+    _isScaling = false;
+    _initialSpan = 0;
+    gameRenderer.readyToShoot = false;
+    gameRenderer.aboutToCancel = false;
+    gameRenderer.shootingX = 0;
+    gameRenderer.shootingY = 0;
+  }
 
   /// Port of onResume() - Initialize game when screen becomes active
   Future<void> _onResume() async {
     try {
-      print("=== Starting game initialization ===");
-      
       showResults = false;
       hideResultsBox();
 
       // Load shaders and textures
-      print("Loading shaders...");
       await gameRenderer.loadShaders();
-      print("Shaders loaded successfully");
-      
-      print("Loading textures...");
       await gameRenderer.loadTextures();
-      print("Textures loaded successfully");
 
       // Initialize database
-      print("Initializing database...");
       dbAdapter = CarromDbAdapter();
       dbAdapter!.open();
       
       // Initialize game config with Human vs AI setup
-      print("Loading game config...");
       gameConfig = GameConfig(dbAdapter);
       gameConfig!.loadConfigs();
       
       // Set up for Human vs AI (beginner)
       gameConfig!.gamePlayerCount = 2;
-      // Player types are managed through player list in GameConfig
-      // player[0] = -1 means basicPlayers[0] = "Human"
-      // player[1] = -2 means basicPlayers[1] = "Machine: Beginner"
 
       // Check if very first time (tutorial)
       if (gameConfig!.veryFirstTime) {
-        print("First time launch - skipping tutorial for now");
         gameConfig!.veryFirstTime = false;
         gameConfig!.saveConfigs();
-        // Don't return - continue with game initialization
       }
 
       // Initialize score database
-      print("Initializing score database...");
       scoreDbAdapter = ScoreDbAdapter();
       scoreDbAdapter!.open();
 
@@ -158,7 +159,6 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       soundThread = SoundThread();
 
       // Initialize game engine with callback fragment
-      print("Creating game engine...");
       final fragment = GameFragmentCallbacks(
         updateScorePanelCallback: _updateScorePanel,
         showResultsBoxCallback: showResultsBox,
@@ -175,20 +175,17 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       );
 
       // Start the game
-      print("Starting game engine...");
       if (engine != null) {
         engine!.start();
       }
       
       thingsLoaded = true;
-      print("=== Game initialization complete ===");
 
       if (mounted) {
         setState(() {});
       }
     } catch (e, stackTrace) {
-      print("ERROR during game initialization: $e");
-      print("Stack trace: $stackTrace");
+      debugPrint("ERROR during game initialization: $e\n$stackTrace");
       
       // Set thingsLoaded to true anyway to avoid infinite loading
       thingsLoaded = true;
@@ -684,10 +681,14 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                       }
                       
                       _pointerCount--;
+                      if (_pointerCount < 0) _pointerCount = 0; // Safety
                       
                       if (_pointerCount == 0 && _isScaling) {
                         _onScaleEnd();
                       }
+                    },
+                    onPointerCancel: (event) {
+                      _resetTouchState();
                     },
                     child: SizedBox.expand(
                       child: CustomPaint(
@@ -770,3 +771,4 @@ class GameFragmentCallbacks extends GameFragment {
     updateScorePanelCallback();
   }
 }
+
