@@ -335,8 +335,11 @@ class GameRenderer {
   
   // Track successful frames for warmup
   int _successfulFrameCount = 0;
+  
+  // Supersampling scale (2x = 4x pixels, better quality but more GPU)
+  static const double _supersampleScale = 1.5; // 1.5x resolution for smoother edges
 
-  /// Render scene with post-processing lighting
+  /// Render scene with post-processing lighting and supersampling
   void _renderWithPostProcessing(Canvas canvas, Size size) {
     final width = size.width.toInt();
     final height = size.height.toInt();
@@ -345,15 +348,34 @@ class GameRenderer {
       return;
     }
 
+    // Calculate supersampled dimensions
+    final ssWidth = (width * _supersampleScale).toInt();
+    final ssHeight = (height * _supersampleScale).toInt();
+    final ssSize = Size(ssWidth.toDouble(), ssHeight.toDouble());
+    
+    // Don't supersample if it would exceed limits
+    if (ssWidth > 4096 || ssHeight > 4096) {
+      _renderScene(canvas, size);
+      return;
+    }
+
     ui.Image? sceneImage;
     
     try {
+      // Render scene at higher resolution
       final recorder = ui.PictureRecorder();
       final offscreenCanvas = Canvas(recorder);
+      
+      // Scale the canvas to render at higher resolution
+      offscreenCanvas.scale(_supersampleScale, _supersampleScale);
       _renderScene(offscreenCanvas, size);
+      
       final picture = recorder.endRecording();
-      sceneImage = picture.toImageSync(width, height);
-      _applyPostProcessing(canvas, size, sceneImage);
+      // Create image at supersampled resolution
+      sceneImage = picture.toImageSync(ssWidth, ssHeight);
+      
+      // Apply post-processing (shader will sample from high-res and output to normal res)
+      _applyPostProcessingWithDownsample(canvas, size, sceneImage, ssSize);
       _postProcessFailCount = 0;
     } catch (e) {
       _postProcessFailCount++;
@@ -379,16 +401,16 @@ class GameRenderer {
     _successfulFrameCount = 0;
   }
 
-  /// Apply post-processing lighting shader
-  void _applyPostProcessing(Canvas canvas, Size size, ui.Image sceneImage) {
+  /// Apply post-processing with downsampling from supersampled image
+  void _applyPostProcessingWithDownsample(Canvas canvas, Size outputSize, ui.Image ssImage, Size ssSize) {
     final shader = postProcessShader!;
     
-    // Set scene texture (sampler at index 0)
-    shader.setImageSampler(0, sceneImage);
+    // Set scene texture (sampler at index 0) - this is the supersampled image
+    shader.setImageSampler(0, ssImage);
     
-    // Set resolution (floats start at index 0)
-    shader.setFloat(0, size.width);
-    shader.setFloat(1, size.height);
+    // Set resolution to the SUPERSAMPLED size so shader samples correctly
+    shader.setFloat(0, ssSize.width);
+    shader.setFloat(1, ssSize.height);
     
     // Normalize light direction
     final lightLen = math.sqrt(lightDirX * lightDirX + lightDirY * lightDirY + lightDirZ * lightDirZ);
@@ -408,13 +430,22 @@ class GameRenderer {
     shader.setFloat(11, saturation);
     shader.setFloat(12, brightness);
     
-    // Draw full-screen quad with shader
-    final paint = Paint()..shader = shader;
+    // Scale down from supersampled size to output size
+    canvas.save();
+    canvas.scale(outputSize.width / ssSize.width, outputSize.height / ssSize.height);
+    
+    // Draw at supersampled size (will be scaled down)
+    final paint = Paint()
+      ..shader = shader
+      ..filterQuality = FilterQuality.high; // High quality downsampling
     canvas.drawRect(
-      Rect.fromLTWH(0, 0, size.width, size.height),
+      Rect.fromLTWH(0, 0, ssSize.width, ssSize.height),
       paint,
     );
+    
+    canvas.restore();
   }
+
 
   /// Render the scene (called by both direct and post-processing paths)
   void _renderScene(Canvas canvas, Size size) {
