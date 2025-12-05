@@ -620,10 +620,24 @@ class GameEngine {
     double z2 = rayZ;
 
     rayY = MeshData.BOARD_TOP;
-    rayX = (rayY - y1) / (y2 - y1) * (x2 - x1) + x1;
-    rayZ = (rayY - y1) / (y2 - y1) * (z2 - z1) + z1;
+    
+    // Safety check: avoid division by near-zero when camera is parallel to board
+    double dy = y2 - y1;
+    if (dy.abs() < 0.0001) {
+      // Camera is looking nearly parallel to board - use fallback
+      rayX = x1;
+      rayZ = z1;
+    } else {
+      double t = (rayY - y1) / dy;
+      rayX = t * (x2 - x1) + x1;
+      rayZ = t * (z2 - z1) + z1;
+    }
 
     rayY = -rayZ;
+    
+    // Clamp to reasonable board bounds to prevent extreme values
+    rayX = rayX.clamp(-2.0, 2.0);
+    rayY = rayY.clamp(-2.0, 2.0);
   }
 
   /// Unproject screen coordinates to world space
