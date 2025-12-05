@@ -237,7 +237,7 @@ class GameController {
 
       if (!engine.shootingProgress || engine.automatic || engine.gameFragment == null) {
         if (engine.boardDoubleTapState == 3) {
-          animateScale();
+          await animateScale();
         }
 
         if (engine.moving && (engine.diffX != 0 || engine.diffY != 0)) {
@@ -1237,8 +1237,47 @@ class GameController {
     // Implementation continues
   }
 
-  void animateScale() async {
-    // Implementation continues
+  Future<void> animateScale() async {
+    // Reset state immediately to prevent re-triggering during async animation
+    // This is different from Java because Dart's async allows touch events
+    // to be processed while we're awaiting inside the animation loop
+    engine.boardDoubleTapState = 0;
+    
+    const int steps = 20;
+    double targetScale = 0.8;
+    bool scaleIn = false;
+    
+    if (renderer.scale > 1.2) {
+      targetScale = 1.0;
+    } else {
+      targetScale = 1.4;
+      scaleIn = true;
+    }
+    
+    double eyeDisp = 0;
+    if (scaleIn) {
+      eyeDisp = -engine.boardTapx;
+      if (eyeDisp > 0.7) {
+        eyeDisp = 0.7;
+      }
+      if (eyeDisp < -0.7) {
+        eyeDisp = -0.7;
+      }
+    } else {
+      eyeDisp = 0;
+    }
+    
+    double scalediff = (targetScale - renderer.scale) / steps;
+    double eyediff = (eyeDisp - renderer.eyedisp) / steps;
+    
+    for (int i = 0; i < steps && !done; i++) {
+      renderer.updateEye(0, 0, scalediff, eyediff);
+      await sleepMe(SLEEP_TIME);
+    }
+    
+    renderer.scale = targetScale;
+    renderer.eyedisp = eyeDisp;
+    renderer.updateEye(0, 0, 0, 0);
   }
 
   void sendToNetwork() {

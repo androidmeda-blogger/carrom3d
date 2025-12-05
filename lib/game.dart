@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
+import 'dart:math' as math;
 import 'game_renderer.dart';
 import 'game_engine.dart';
 import 'game_config.dart';
@@ -37,6 +38,9 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
   // Scale gesture detection
   double _initialSpan = 0;
   bool _isScaling = false;
+  
+  // Track pointer positions for multi-touch gestures
+  final Map<int, Offset> _pointerPositions = {};
 
   @override
   void initState() {
@@ -113,6 +117,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
     _pointerCount = 0;
     _isScaling = false;
     _initialSpan = 0;
+    _pointerPositions.clear();
     gameRenderer.readyToShoot = false;
     gameRenderer.aboutToCancel = false;
     gameRenderer.shootingX = 0;
@@ -650,12 +655,14 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                   // Game canvas
                   Listener(
                     onPointerDown: (event) {
+                      _pointerPositions[event.pointer] = event.localPosition;
                       _pointerCount++;
                       if (_pointerCount == 1) {
                         _onTouchDown(event.localPosition);
                       }
                     },
                     onPointerMove: (event) {
+                      _pointerPositions[event.pointer] = event.localPosition;
                       if (_pointerCount == 1 || gameRenderer.readyToShoot) {
                         _onTouchMove(event.localPosition, 0);
                       } else if (_pointerCount == 2 && 
@@ -665,7 +672,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                       } else if (_pointerCount >= 2 && 
                                  (!gameRenderer.readyToShoot || (engine?.automatic ?? false))) {
                         // Scale gesture
-                        double span = _calculatePointerSpan(event);
+                        double span = _calculatePointerSpan();
                         if (_isScaling) {
                           _onScaleUpdate(span);
                         } else {
@@ -680,14 +687,17 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                         _onTouchUp(event.localPosition, 1, true);
                       }
                       
+                      _pointerPositions.remove(event.pointer);
                       _pointerCount--;
                       if (_pointerCount < 0) _pointerCount = 0; // Safety
                       
-                      if (_pointerCount == 0 && _isScaling) {
+                      // End scaling when going from 2 to 1 finger, or when all fingers up
+                      if (_isScaling && _pointerCount < 2) {
                         _onScaleEnd();
                       }
                     },
                     onPointerCancel: (event) {
+                      _pointerPositions.remove(event.pointer);
                       _resetTouchState();
                     },
                     child: SizedBox.expand(
@@ -712,10 +722,15 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
   }
 
   /// Calculate span between two pointers for scale gesture
-  double _calculatePointerSpan(PointerEvent event) {
-    // Simplified - would need to track multiple pointers properly
-    // For now, use a placeholder
-    return 100.0;
+  double _calculatePointerSpan() {
+    if (_pointerPositions.length < 2) {
+      return _initialSpan > 0 ? _initialSpan : 100.0;
+    }
+    
+    final positions = _pointerPositions.values.toList();
+    final dx = positions[0].dx - positions[1].dx;
+    final dy = positions[0].dy - positions[1].dy;
+    return math.sqrt(dx * dx + dy * dy);  // Return actual distance
   }
 }
 
