@@ -441,7 +441,7 @@ class GameController {
         if (placeIt) {
           currentDiskxpos = engine.placingDiskx;
           currentDiskypos = renderer.yposPieces[0];
-          placeDisk();
+          await placeDisk();
           nt_diskMoved = true;
         }
       }
@@ -1364,8 +1364,32 @@ class GameController {
     // Player change logic - implementation continues
   }
 
-  void placeDisk() async {
-    // Implementation continues
+  Future<void> placeDisk() async {
+    // Find a valid position for the disk
+    findPlaceToDisk();
+    
+    const int steps = 10;
+    
+    double xposdiff = (currentDiskxpos - renderer.xposPieces[0]) / steps;
+    double yposdiff = (currentDiskypos - renderer.yposPieces[0]) / steps;
+    
+    // Raise the disk during animation
+    renderer.zRaised[0] = true;
+    
+    // Animate the disk movement
+    for (int i = 0; i < steps && !done; i++) {
+      renderer.xposPieces[0] += xposdiff;
+      renderer.yposPieces[0] += yposdiff;
+      
+      await sleepMe(SLEEP_TIME);
+    }
+    
+    // Lower the disk and set final position
+    renderer.zRaised[0] = false;
+    engine.lastLandedDiskX = currentDiskxpos;
+    engine.lastLandedDiskY = currentDiskypos;
+    renderer.xposPieces[0] = engine.lastLandedDiskX;
+    renderer.yposPieces[0] = engine.lastLandedDiskY;
   }
 
   Future<void> animateScale() async {
