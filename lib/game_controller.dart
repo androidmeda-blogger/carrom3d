@@ -385,14 +385,13 @@ class GameController {
 
         if (renderer.shootingMode) {
           // Shooting mode logic
-          await _handleShootingMode(
+          diskMoveMultiplier = await _handleShootingMode(
             diskMoveMultiplier,
             diskCurrentX,
             diskCurrentY,
             diskStartX,
             diskStartY,
           );
-          diskMoveMultiplier = 1; // Reset after handling
         } else {
           // Disk positioning mode
           var result = await _handleDiskPositioning(
@@ -1054,15 +1053,165 @@ class GameController {
   // replacePiece(), checkPenalties(), etc.
 
   // Helper methods for shooting/positioning mode
-  Future<void> _handleShootingMode(
+  Future<int> _handleShootingMode(
     int diskMoveMultiplier,
     double diskCurrentX,
     double diskCurrentY,
     double diskStartX,
     double diskStartY,
   ) async {
-    // Implementation continues...
-    // This is a placeholder for the shooting mode logic
+    // when the disk is moving for shooting
+    if (engine.diskMoving) {
+      if (!renderer.aboutToCancel) {
+        bool diskXChanged = false;
+        bool diskYChanged = false;
+        double shootingX = renderer.shootingX;
+        double shootingY = renderer.shootingY;
+
+        if (!engine.automatic) {
+          if (engine.moving || engine.scaling) {
+            shootingX = (diskCurrentX - diskStartX) * 0.75;
+            shootingY = (diskCurrentY - diskStartY) * 0.75;
+
+            double dist = shootingX * shootingX + shootingY * shootingY;
+            if (dist >= MeshData.DISK_SHOOTING_DIST * MeshData.DISK_SHOOTING_DIST) {
+              dist = math.sqrt(dist);
+              shootingX = shootingX * MeshData.DISK_SHOOTING_DIST / dist;
+              shootingY = shootingY * MeshData.DISK_SHOOTING_DIST / dist;
+            }
+
+            renderer.shootingX = shootingX;
+            diskXChanged = diskYChanged = true;
+          } else {
+            if (diskCurrentX - diskStartX > 0.01 &&
+                shootingX < MeshData.DISK_SHOOTING_DIST) {
+              shootingX = (diskCurrentX - diskStartX) * 0.75;
+              diskXChanged = true;
+            } else if (diskCurrentX - diskStartX < -0.01 / diskMoveMultiplier &&
+                shootingX > -MeshData.DISK_SHOOTING_DIST) {
+              shootingX = (diskCurrentX - diskStartX) * 0.75;
+              diskXChanged = true;
+            }
+
+            if (diskCurrentY - diskStartY > 0.01 &&
+                shootingY < MeshData.DISK_SHOOTING_DIST) {
+              shootingY = (diskCurrentY - diskStartY) * 0.75;
+              diskYChanged = true;
+            } else if (diskCurrentY - diskStartY < -0.01 &&
+                shootingY > -MeshData.DISK_SHOOTING_DIST) {
+              shootingY = (diskCurrentY - diskStartY) * 0.75;
+              diskYChanged = true;
+            }
+          }
+        }
+
+        if (diskXChanged || diskYChanged || engine.automatic) {
+          if (diskMoveMultiplier < 8) {
+            diskMoveMultiplier += 2;
+          }
+          double dist = math.sqrt(shootingX * shootingX + shootingY * shootingY);
+          if (dist > MeshData.DISK_SHOOTING_DIST) {
+            shootingX = shootingX * MeshData.DISK_SHOOTING_DIST / dist;
+            shootingY = shootingY * MeshData.DISK_SHOOTING_DIST / dist;
+          }
+          renderer.shootingX = shootingX;
+          renderer.shootingY = shootingY;
+
+          readyArrows();
+
+          renderer.readyToShoot = true;
+
+          // make sure the dist is above the threshold
+          if (dist < MeshData.DISK_SHOOTING_THRESHOLD) {
+            if (diskEscapedThreshold) {
+              renderer.aboutToCancel = readyCross();
+            } else {
+              renderer.aboutToCancel = false;
+            }
+          } else {
+            renderer.aboutToCancel = false;
+            diskEscapedThreshold = true;
+
+            if (dist * dist > lastHighShootingX * lastHighShootingX +
+                lastHighShootingY * lastHighShootingY) {
+              lastHighShootingX = shootingX;
+              lastHighShootingY = shootingY;
+            }
+          }
+          nt_shootingMoved = true;
+        }
+      }
+    } else if (renderer.readyToShoot) {
+      readyArrows(); // for last min show
+
+      double dist = math.sqrt(renderer.shootingX * renderer.shootingX +
+          renderer.shootingY * renderer.shootingY);
+      if (dist >= MeshData.DISK_SHOOTING_THRESHOLD) {
+        // send the current coordinates to the network
+        sendShotToNetwork();
+
+        renderer.shootingX -= (renderer.shootingX *
+            MeshData.DISK_SHOOTING_THRESHOLD / dist);
+        renderer.shootingY -= (renderer.shootingY *
+            MeshData.DISK_SHOOTING_THRESHOLD / dist);
+        speedx[0] = -renderer.shootingX * SHOOT_DIST_SPEED_FACTOR;
+        speedy[0] = -renderer.shootingY * SHOOT_DIST_SPEED_FACTOR;
+
+        double speed = math.sqrt(speedx[0] * speedx[0] + speedy[0] * speedy[0]);
+
+        if (speed != 0) {
+          // do a sleepy loop till the origShootingX becomes
+          engine.soundThread?.playD(speed);
+
+          while (!done) {
+            double pos = math.sqrt(renderer.shootingX * renderer.shootingX +
+                renderer.shootingY * renderer.shootingY);
+            if (pos - speed < 0) {
+              double sleepTime = pos * SLEEP_TIME / speed;
+              await sleepMe(sleepTime.toInt());
+              break;
+            }
+            await sleepMe(SLEEP_TIME);
+
+            renderer.shootingX += speedx[0];
+            renderer.shootingY += speedy[0];
+          }
+
+          engine.shootingProgress = true;
+
+          lastPlayedDiskPosx[engine.currentPlayer] = renderer.xposPieces[0];
+          lastPlayedDiskPosy[engine.currentPlayer] = renderer.yposPieces[0];
+
+          engine.piecesMoving = true;
+        }
+      } else {
+        renderer.shootingMode = false;
+      }
+
+      renderer.readyToShoot = false;
+      renderer.arrowReady = false;
+      renderer.shootingX = 0;
+      renderer.shootingY = 0;
+      lastHighShootingX = 0;
+      lastHighShootingY = 0;
+      diskMoveMultiplier = 1;
+      renderer.aboutToCancel = false;
+      diskEscapedThreshold = false;
+      engine.strokeHitSomewhere = false; // to track break attempts
+    } else if (renderer.aboutToCancel) {
+      // this included about to cancel is happen
+      renderer.readyToShoot = false;
+      renderer.arrowReady = false;
+      renderer.shootingX = 0;
+      renderer.shootingY = 0;
+      lastHighShootingX = 0;
+      lastHighShootingY = 0;
+      diskMoveMultiplier = 1;
+      renderer.aboutToCancel = false;
+      diskEscapedThreshold = false;
+      engine.piecesMoving = false;
+    }
+    return diskMoveMultiplier;
   }
 
   Future<Map<String, dynamic>> _handleDiskPositioning(
@@ -1439,13 +1588,318 @@ class GameController {
     // Network communication - implementation continues
   }
 
+  void readyArrows() {
+    double draggedLen = math.sqrt(renderer.shootingX * renderer.shootingX +
+        renderer.shootingY * renderer.shootingY);
+
+    if (draggedLen >= MeshData.DISK_SHOOTING_THRESHOLD) {
+      // fill the 0th entry outside
+      double startX = renderer.xposPieces[0];
+      double startY = renderer.yposPieces[0];
+
+      double dispX = startX;
+      double dispY = startY;
+
+      int count = 0;
+
+      // adjusted shootingX and shootingY
+      double adjustedShootingX = renderer.shootingX -
+          (renderer.shootingX * MeshData.DISK_SHOOTING_THRESHOLD / draggedLen);
+      double adjustedShootingY = renderer.shootingY -
+          (renderer.shootingY * MeshData.DISK_SHOOTING_THRESHOLD / draggedLen);
+
+      double dspeedX = -adjustedShootingX * SHOOT_DIST_SPEED_FACTOR;
+      double dspeedY = -adjustedShootingY * SHOOT_DIST_SPEED_FACTOR;
+
+      double friction = DISK_FRICTION;
+      double radius = MeshData.RADIUS * MeshData.DISK_RADIUS_FACTOR;
+      double boundary = 0.9 - radius;
+
+      double endX = 0, endY = 0;
+
+      while (dspeedX != 0 || dspeedY != 0) {
+        dispX += dspeedX;
+        dispY += dspeedY;
+
+        // Boundary energy loss
+        bool dirChanged = false;
+        bool zeroChanged = false;
+        if (dispX > boundary) {
+          endX = boundary;
+          if (dispX == startX) {
+            // zero displacement
+            endY = startY;
+            zeroChanged = true;
+          } else {
+            endY = (dispY - startY) * (endX - startX) / (dispX - startX) + startY;
+          }
+          dirChanged = true;
+
+          dispX = boundary - (dispX - boundary);
+          dspeedX = -dspeedX + BORDER_ENERGY_LOSS_SQR;
+        } else if (dispX < -boundary) {
+          endX = -boundary;
+          if (dispX == startX) {
+            endY = startY;
+            zeroChanged = true;
+          } else {
+            endY = (dispY - startY) * (endX - startX) / (dispX - startX) + startY;
+          }
+          dirChanged = true;
+
+          dispX = -boundary + (-boundary - dispX);
+          dspeedX = -dspeedX - BORDER_ENERGY_LOSS_SQR;
+        }
+
+        if (dispY > boundary) {
+          endY = boundary;
+          if (dispY == startY) {
+            endX = startX;
+            zeroChanged = true;
+          } else {
+            endX = (dispX - startX) * (endY - startY) / (dispY - startY) + startX;
+          }
+          dirChanged = true;
+
+          dispY = boundary - (dispY - boundary);
+          dspeedY = -dspeedY + BORDER_ENERGY_LOSS_SQR;
+        } else if (dispY < -boundary) {
+          endY = -boundary;
+          if (dispY == startY) {
+            endX = startX;
+            zeroChanged = true;
+          } else {
+            endX = (dispX - startX) * (endY - startY) / (dispY - startY) + startX;
+          }
+          dirChanged = true;
+
+          dispY = -boundary + (-boundary - dispY);
+          dspeedY = -dspeedY - BORDER_ENERGY_LOSS_SQR;
+        }
+
+        double newspeedi = math.sqrt(dspeedX * dspeedX + dspeedY * dspeedY);
+        double fricspeedi = newspeedi - friction;
+        double fricfactor = 0;
+        if (fricspeedi <= 0) {
+          fricfactor = 0;
+        } else {
+          fricfactor = fricspeedi / newspeedi;
+        }
+        dspeedX *= fricfactor;
+        dspeedY *= fricfactor;
+
+        if ((dspeedX).abs() < 1e-4 && (dspeedY).abs() < 1e-4) {
+          dspeedX = 0;
+          dspeedY = 0;
+        }
+
+        if (dirChanged) {
+          // start a new line stopping old
+          if (zeroChanged) {
+            // nothing has moved much, so just ignore this
+            continue;
+          }
+
+          double disp = math.sqrt(distsq(startX, startY, endX, endY));
+          if (disp == 0) {
+            // same as zero changed
+            continue;
+          }
+          arrowLen[count] = disp;
+          if (count == 0) {
+            arrowLen[count] -= radius;
+          }
+
+          double cost = (endX - startX) / disp;
+          double sint = (endY - startY) / disp;
+
+          arrowAngle[count] = math.acos(cost) * 180 / math.pi;
+          if (sint < 0) {
+            arrowAngle[count] = -arrowAngle[count];
+          }
+
+          // clear the radius for the first one
+          if (count == 0) {
+            startX += radius * cost * 0.9;
+            startY += radius * sint * 0.9;
+          }
+
+          double distVal = math.sqrt(startX * startX + startY * startY);
+          double costheta = startX / distVal;
+          double sintheta = startY / distVal;
+
+          // alpha = theta - t
+          double cosalpha = costheta * cost + sintheta * sint;
+          double sinalpha = sintheta * cost - costheta * sint;
+
+          // new coordinate system will be
+          arrowX[count] = distVal * cosalpha;
+          arrowY[count] = distVal * sinalpha;
+
+          // start the information for the new
+          count++;
+          startX = endX;
+          startY = endY;
+
+          if (count > 15) {
+            break;
+          }
+        }
+      }
+
+      endX = dispX;
+      endY = dispY;
+      double disp = math.sqrt(distsq(startX, startY, endX, endY));
+      if (disp != 0 && count < 15) {
+        // same as zero changed
+
+        // the final one is kept with the arrow head size
+        arrowLen[count] = disp - renderer.arrowHeadWidth;
+
+        if (count == 0) {
+          arrowLen[count] -= radius;
+        }
+
+        double cost = (endX - startX) / disp;
+        double sint = (endY - startY) / disp;
+
+        arrowAngle[count] = math.acos(cost) * 180 / math.pi;
+        if (sint < 0) {
+          arrowAngle[count] = -arrowAngle[count];
+        }
+
+        // clear the radius for the first one
+        if (count == 0) {
+          startX += radius * cost * 0.9;
+          startY += radius * sint * 0.9;
+        }
+
+        double distVal = math.sqrt(startX * startX + startY * startY);
+        double costheta = startX / distVal;
+        double sintheta = startY / distVal;
+
+        // alpha = theta - t
+        double cosalpha = costheta * cost + sintheta * sint;
+        double sinalpha = sintheta * cost - costheta * sint;
+
+        // new coordinate system will be
+        arrowX[count] = distVal * cosalpha;
+        arrowY[count] = distVal * sinalpha;
+
+        // start the information for the new
+        count++;
+      }
+
+      // swapping the pointers here
+      List<double> tmpArrowX = renderer.arrowX;
+      List<double> tmpArrowY = renderer.arrowY;
+      List<double> tmpArrowAngle = renderer.arrowAngle;
+      List<double> tmpArrowLen = renderer.arrowLen;
+
+      // hopefully no context switches
+      renderer.arrowX = arrowX;
+      renderer.arrowY = arrowY;
+      renderer.arrowAngle = arrowAngle;
+      renderer.arrowLen = arrowLen;
+      renderer.arrowCount = count;
+
+      arrowX = tmpArrowX;
+      arrowY = tmpArrowY;
+      arrowAngle = tmpArrowAngle;
+      arrowLen = tmpArrowLen;
+
+      renderer.arrowReady = true;
+    } else {
+      renderer.arrowReady = false;
+    }
+  }
+
+  bool readyCross() {
+    double arrowLenVal = math.sqrt(lastHighShootingX * lastHighShootingX +
+        lastHighShootingY * lastHighShootingY);
+
+    if (arrowLenVal < 0.001) {
+      return false;
+    }
+
+    double cost = -lastHighShootingX / arrowLenVal;
+    double sint = -lastHighShootingY / arrowLenVal;
+
+    double arrowXVal = renderer.xposPieces[0];
+    double arrowYVal = renderer.yposPieces[0];
+
+    double arrowAngleVal = math.acos(cost) * 180 / math.pi;
+    if (sint < 0) {
+      arrowAngleVal = -arrowAngleVal;
+    }
+
+    arrowXVal += 0.2 * cost;
+    arrowYVal += 0.2 * sint;
+
+    double distVal = math.sqrt(arrowXVal * arrowXVal + arrowYVal * arrowYVal);
+    double costhetaVal = arrowXVal / distVal;
+    double sinthetaVal = arrowYVal / distVal;
+
+    // t1 = t + pi/4
+    double cost1 = 0.707 * (cost - sint);
+    double sint1 = 0.707 * (sint + cost);
+
+    // t2 = t - pi/4
+    double cost2 = sint1;
+    double sint2 = -cost1;
+
+    // alpha = theta - t
+    double cosalpha1 = costhetaVal * cost1 + sinthetaVal * sint1;
+    double sinalpha1 = sinthetaVal * cost1 - costhetaVal * sint1;
+    double cosalpha2 = costhetaVal * cost2 + sinthetaVal * sint2;
+    double sinalpha2 = sinthetaVal * cost2 - costhetaVal * sint2;
+
+    // new coordinate system will be
+    renderer.crossX1 = distVal * cosalpha1;
+    renderer.crossY1 = distVal * sinalpha1;
+    renderer.crossX2 = distVal * cosalpha2;
+    renderer.crossY2 = distVal * sinalpha2;
+    renderer.crossAngle = arrowAngleVal;
+
+    return true;
+  }
+
+  void sendShotToNetwork() {
+    if (!(engine.gameConfig != null && engine.gameConfig!.isPlayingNetwork)) {
+      return;
+    }
+    if (engine.playerTypes[engine.currentPlayer] == GameEngine.NETWORK_PLAYER_TYPE) {
+      // we don't send the network players work back to network
+      return;
+    }
+
+    networkCounter = 0;
+    networkPingCounter = 0;
+    String pieces = "10";
+    pieces += "#${renderer.xposPieces[0].toStringAsFixed(8)}";
+    pieces += ",${renderer.yposPieces[0].toStringAsFixed(8)}";
+
+    pieces += ",${renderer.shootingX.toStringAsFixed(8)}";
+    pieces += ",${renderer.shootingY.toStringAsFixed(8)}";
+
+    // always send the dump before the shot
+    String dump = engine.remoteDump();
+    pieces += "#$dump";
+
+    if (engine.gameFragment != null) {
+      try {
+        engine.gameFragment!.sendOutMessage(pieces);
+      } catch (e) {
+        // Time to close the sockets (hopefully an update will work)
+        engine.gameFragment!.closeSockets();
+      }
+    }
+  }
+
   // Additional methods to be implemented:
-  // - readyArrows()
-  // - readyCross()
   // - replacePiece()
   // - checkPenalties()
   // - performPenalties()
   // - finishGame()
-  // - sendShotToNetwork()
 }
 
